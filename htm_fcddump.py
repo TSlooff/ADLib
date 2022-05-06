@@ -13,6 +13,11 @@ parser.add_argument('file',
     help='path to the csv file',
     type=pathlib.Path,
     )
+parser.add_argument('-c', '--cutoff',
+    help='cutoff value for anomaly detection. anomaly scores are in [0,1]. You can specify higher cutoff values, in which case no anomalies will be detected.',
+    default=1.0,
+    type=float,
+    )
 
 args = parser.parse_args()
 
@@ -92,8 +97,6 @@ tm = TM(
     **tm_params
 )
 
-CUTOFF = 1.0
-
 with open(args.file, 'r') as f:
     df = np.array(list(csv.reader(f, delimiter=';')))
 
@@ -112,7 +115,7 @@ for vehicle_id in np.unique(df[:, 1]):
         tm.compute(columns, True)
 
         # trigger based on variable CUTOFF. anomaly score in [0, 1] but is sensitive in early stage so will reach 1.
-        if tm.anomaly >= CUTOFF:
+        if tm.anomaly >= args.cutoff:
             #print("anomaly!")
             sys.exit(1)
 
