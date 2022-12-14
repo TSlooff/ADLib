@@ -3,16 +3,24 @@
 
 import sys
 import numpy as np
-import csv
 import argparse
 import pathlib
+import logging
+import logging.config
+import data_handlers
+
+logging.config.fileConfig('logging/logging.conf')
+logger = logging.getLogger('main')
+
+logger.info("starting anomaly detection")
 
 # parse command line arguments
-parser = argparse.ArgumentParser(description='Anomaly Detection algorithm applied to FCD data in given file.')
+parser = argparse.ArgumentParser(description='Anomaly Detection algorithm applied to data in given file.')
 parser.add_argument('file',
-    help='path to the csv file',
+    help='path to the file',
     type=pathlib.Path,
     )
+
 parser.add_argument('-c', '--cutoff',
     help='cutoff value for anomaly detection. anomaly scores are in [0,1]. You can specify higher cutoff values, in which case no anomalies will be detected.',
     default=1.0,
@@ -20,6 +28,10 @@ parser.add_argument('-c', '--cutoff',
     )
 
 args = parser.parse_args()
+
+data = data_handlers.parse(args.file)
+print(data)
+print(len(data))
 
 # HTM imports
 from htm.bindings.sdr import SDR
@@ -29,7 +41,7 @@ from htm.encoders.rdse import RDSE, RDSE_Parameters
 from htm.bindings.algorithms import ANMode
 
 # custom encoders
-from CustomEncoders import MultiEncoder
+from encoders.CustomEncoders import MultiEncoder
 
 # speed encoder
 rdse_params_speed = RDSE_Parameters()
@@ -97,30 +109,30 @@ tm = TM(
     **tm_params
 )
 
-with open(args.file, 'r') as f:
-    df = np.array(list(csv.reader(f, delimiter=';')))
+# with open(args.file, 'r') as f:
+#     df = np.array(list(csv.reader(f, delimiter=';')))
 
-traj_data = df[:,2:].astype(np.float)
+# traj_data = df[:,2:].astype(np.float)
 
-# split data for each vehicle
-for vehicle_id in np.unique(df[:, 1]):
-    # Slice on the rows with the correct vehicle_id
-    # latitude, longitude, speed
-    traj = traj_data[np.where(df[:,1] == vehicle_id)]
+# # split data for each vehicle
+# for vehicle_id in np.unique(df[:, 1]):
+#     # Slice on the rows with the correct vehicle_id
+#     # latitude, longitude, speed
+#     traj = traj_data[np.where(df[:,1] == vehicle_id)]
     
-    for i in range(len(traj)):
-        sdr_encoding = encoder.encode(traj[i])
-        columns = SDR(sp.getColumnDimensions())
-        sp.compute(sdr_encoding, True, columns)
-        tm.compute(columns, True)
+#     for i in range(len(traj)):
+#         sdr_encoding = encoder.encode(traj[i])
+#         columns = SDR(sp.getColumnDimensions())
+#         sp.compute(sdr_encoding, True, columns)
+#         tm.compute(columns, True)
 
-        # trigger based on variable CUTOFF. anomaly score in [0, 1] but is sensitive in early stage so will reach 1.
-        if tm.anomaly >= args.cutoff:
-            #print("anomaly!")
-            sys.exit(1)
+#         # trigger based on variable CUTOFF. anomaly score in [0, 1] but is sensitive in early stage so will reach 1.
+#         if tm.anomaly >= args.cutoff:
+#             #print("anomaly!")
+#             sys.exit(1)
 
-    # reset temporal memory for next sequence
-    tm.reset()
+#     # reset temporal memory for next sequence
+#     tm.reset()
 
-#print("data parsed. no anomalies.")
-sys.exit(0)
+# #print("data parsed. no anomalies.")
+# sys.exit(0)
