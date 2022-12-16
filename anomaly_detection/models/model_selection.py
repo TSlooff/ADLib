@@ -238,6 +238,8 @@ if __name__=="__main__":
         help='Remove all experiments which have zero attempts.')
     parser.add_argument('experiment', nargs=argparse.REMAINDER,
         help='Name of experiment module followed by its command line arguments.')
+    parser.add_argument('-s', '--skip', action='store_true',
+        help='In case the model selection can be skipped.')
 
     
     all_optimizers = [
@@ -254,6 +256,10 @@ if __name__=="__main__":
         method.add_arguments(parser)
 
     args = parser.parse_args()
+
+    if args.skip:
+        print("skip flag")
+        exit()
 
     # default if there is no remainder, since there is no default accepted with argparse.REMAINDER
     if args.experiment == []:
