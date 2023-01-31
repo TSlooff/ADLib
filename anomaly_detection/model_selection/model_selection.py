@@ -12,6 +12,7 @@ import re
 import htm.optimization.optimizers as optimizers
 from custom_swarming import CustomParticleSwarmOptimization, ParamFreezingRule
 from functools import partial
+import glob
 
 # tracing
 import faulthandler
@@ -25,6 +26,7 @@ from htm.encoders.rdse import RDSE, RDSE_Parameters
 from htm.bindings.algorithms import ANMode
 from htm.algorithms import Predictor
 
+sys.path.append("/app/anomaly_detection/")
 sys.path.append("../") # to enable this import:
 from data_handlers import parse
 from model import *
@@ -187,9 +189,10 @@ def main(parameters=default_parameters, argv=None, verbose=True):
     admodel = ADModel.create_model(parameters)
     pred = Predictor(steps=[1], alpha=parameters['alpha'])
 
-    data = parse(pathlib.Path("../../data/Input-Nimes/MES_Nimes_PHI.bin"))
+    data_paths = glob.glob("/app/data/*")
+    data = parse(pathlib.Path(data_paths[0]))
 
-    # TODO how to handle missing data?
+    # TODO how to handle missing data in general
     data[np.where(data == 1e20)] = 0
 
     test_cut = int(0.8 * len(data))
@@ -215,8 +218,8 @@ def main(parameters=default_parameters, argv=None, verbose=True):
     return -mse # module will look to maximize the output value, so negate it to find the smallest mse
 
 if __name__=="__main__":
-    # main()
-    # exit()
+    main()
+    exit()
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-v', '--verbose', action='store_true',
@@ -316,7 +319,7 @@ if __name__=="__main__":
 
         best = max(ae.experiments, key = lambda x: x.mean() )
         print("best parameters: ", best.parameters)
-        mdl_loc = "best_model.h5"
+        mdl_loc = "/app/model/best_model.h5"
         best_mdl = ADModel.create_model(best.parameters)
         best_mdl.save(mdl_loc)
         print(f"model saved at {mdl_loc}")
