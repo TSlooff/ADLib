@@ -6,9 +6,3 @@ services:
       - ./model/:/app/model/
       - ./adlib/:/app/adlib/
     working_dir: /app
-    # example code for model selection: 
-    # docker-compose run anomaly_detection python -m adlib.model_selection --swarming 100 -n 2 --global_time 2
-    # -- in this example: using swarming optimization with 100 particles, 2 processors, run for 2 minutes
-    
-    # example code for detection:
-    # docker-compose run anomaly_detection python -m adlib.detection
