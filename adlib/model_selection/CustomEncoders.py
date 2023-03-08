@@ -95,27 +95,33 @@ class GeoGridEncoder(GridCellEncoder):
         return self.custom_size
         
 class MultiEncoder():
-    def __init__(self, encoders):
+    def __init__(self, encoders:list):
         """
-        :encoders: list of encoders to use in order: latitude, longitude, speed
+        :encoders: list of encoders to use. importantly: should be in same order as how a data point will be processed.
         """
-        self.encoders = encoders
-        self.custom_size = sum([e.size for e in self.encoders])
+        self._n = len(encoders)
+        self.size = sum([e.size for e in encoders])
+        if self._n == 1:
+            # only 1 encoder, overwrite encode method
+            self.encode = self.__encode_single_val
+            self.encoder = encoders[0]
+        else:
+            self.encoders = encoders
+        
+    def __encode_single_val(self, input_data):
+        """
+        special method for when input_data will be a single value.
+        """
+        return self.encoder.encode(input_data[0])
 
     def encode(self, input_data):
         """
-        This function serves as a wrapper for GridCellEncoder where the longitude and latitude are automatically
-        changed to a projection using meters, such that the periods of the grid cell encoder make sense
-        :param: input_data (tuple) (latitude, longitude, speed)
+        Encodes the given input_data, assuming an equal amount of columns as the number of encoders
+        :param: input_data n-dimensional input data, where n = number of encoders
         """
-        (latitude, longitude, speed) = input_data
-        sdr_encoding = SDR(self.custom_size)
-        sdr_encoding.concatenate([
-            self.encoders[0].encode(latitude), 
-            self.encoders[1].encode(longitude), 
-            self.encoders[2].encode(speed)]
-        )
+        sdr_encoding = SDR(self.size)
+        sdr_encoding.concatenate([self.encoders[i].encode(input_data[i]) for i in range(self._n)])
         return sdr_encoding
     
     def get_output_size(self):
-        return self.custom_size
+        return self.size

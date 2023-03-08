@@ -1,5 +1,5 @@
 import htm.optimization.optimizers as optimizers
-from htm.optimization.swarming import ParticleSwarmOptimization, ParticleData, particle_strength, global_strength, velocity_strength
+from htm.optimization.swarming import ParticleSwarmOptimization, ParticleData, particle_strength, global_strength, velocity_strength, score_decay_rate
 from htm.optimization.parameter_set import ParameterSet
 
 import sys
@@ -28,9 +28,11 @@ class ParamFreezingRule:
             # rule is simply comma-seperated parameters to freeze
             # so override the fixed output of self.process
             self.fixed_out = self.clean_split(rule)
+            self.fixed_params = True
         else:
             # rule should be the function:
             self.process = rule
+            self.fixed_params = False
 
     @staticmethod
     def clean_split(s):
@@ -46,21 +48,27 @@ class ParamFreezingRule:
         # for parameter value - dependent freezing the whole function is overriden
         return self.fixed_out
 
-class CustomParticleData(ParticleData):
+class CustomParticleData:
     """
     This is an extension of the default particle data, 
     where the change is that you can indicate parameters to be frozen.
-
-    # TODO a way to make parameters depend on each other. e.g. layers = 1 -> layer_1, layer_2 parameters don't matter.
     """
     def __init__(self, initial_parameters, param_rules, param_bindings, swarm=None, ):
         # need to set this first because initialize_velocities is called in 
         # super constructor and overriden here to use param_rules
-        super().__init__(initial_parameters, swarm)
         self.param_rules = param_rules
         self.param_bindings = param_bindings
+        self.parameters = ParameterSet( initial_parameters )
+        self.best       = None
+        self.best_score = None
+        self.age        = 0
+        self.initialize_velocities(swarm)
+        self.lock       = False
 
     def initialize_velocities(self, swarm=None):
+        # get the parameters to freeze
+        freeze_params = set.union(*[rule.process(self.parameters) for rule in self.param_rules if rule.fixed_params])
+
         # Make a new parameter structure for the velocity data.
         self.velocities = ParameterSet( self.parameters )
         # Iterate through every field in the structure.
@@ -73,7 +81,7 @@ class CustomParticleData(ParticleData):
                 velocity = np.random.normal(np.mean(data), np.std(data))
             else:
                 # New swarm, start with a large random velocity.
-                max_percent_change = .10
+                max_percent_change = 3 # original = 0.10
                 uniform = 2 * random.random() - 1
                 if isinstance(value, float):
                     velocity = value * uniform * max_percent_change
@@ -84,6 +92,8 @@ class CustomParticleData(ParticleData):
                         velocity = value * uniform * max_percent_change
                 else:
                     raise NotImplementedError()
+            if path in freeze_params:
+                velocity = 0
             self.velocities.apply( path, velocity )
 
     def update_position(self):
@@ -95,6 +105,11 @@ class CustomParticleData(ParticleData):
                 # self.param_bindings(path, self.parameters) gets the binding function for that path.
                 # apply this to position + velocity to ensure a minimum / maximum.
                 self.parameters.apply( path, self.param_bindings(path, self.parameters)(position + velocity ))
+        # double check the hierarchical ones, otherwise ordering may cause malfunction
+        for path in [p for p in self.parameters.enumerate() if any(m in p for m in ['activationThreshold', 'localAreaDensity'])]:
+            # at this point, this is position_prev + velocity_prev. SO don't also get velocity. Just apply binding again.
+            position = self.parameters.get( path )
+            self.parameters.apply(path, self.param_bindings(path, self.parameters)(position))
 
     def update_velocity(self, global_best):
         freeze_params = set.union(*[rule.process(self.parameters) for rule in self.param_rules])
@@ -111,10 +126,21 @@ class CustomParticleData(ParticleData):
                 velocity = velocity * velocity_strength + particle_bias + global_bias
                 self.velocities.apply( path, velocity )
 
+    def update(self, score, global_best):
+        self.age += 1
+        if self.best_score is not None:
+            self.best_score *= 1 - score_decay_rate
+        if self.best is None or score > self.best_score:
+            self.best       = ParameterSet( self.parameters )
+            self.best_score = score
+            print("New particle best score %g."%self.best_score)
+        self.update_position()
+        self.update_velocity( global_best )
+
 class CustomParticleSwarmOptimization(ParticleSwarmOptimization):
     """
     Extension of default particle swarm optimization, using the custom particle data class above.
-    Allows freezing of parameters. # TODO as well as modeling dependencies between parameters.
+    Allows freezing of parameters as well as modeling dependencies between parameters.
     """
     def __init__(self, lab, param_rules, param_bindings, args):
         self.swarm_path    = os.path.join( lab.ae_directory, 'particle_swarm.pickle' )

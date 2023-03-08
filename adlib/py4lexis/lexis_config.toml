@@ -1,0 +1,9 @@
+[config]
+USERNAME = "tom.slooff@usi.ch"
+PWD = "5iKtJPLooBdPQ3NB"
+KEYCLOAK_URL =  "https://aai.lexis.tech"
+REALM = "LEXIS_AAI"
+CLIENT_ID = "LEXIS_PORTAL_SERVICE"
+CLIENT_SECRET = "48ad42db-524f-463d-a3de-eaa0ddd2b4ea"
+DDI_ENDPOINT_URL = "https://api.lexis.tech"
+ZONENAME = "IT4ILexisZone"
