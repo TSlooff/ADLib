@@ -14,4 +14,4 @@ RUN python setup.py install --force
 
 WORKDIR /app
 
-#COPY anomaly_detection/ ./anomaly_detection/
+#COPY adlib/ ./adlib/

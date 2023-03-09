@@ -1,6 +1,6 @@
 services:
   anomaly_detection:
-    build: .
+    image: tslooff/adlib
     volumes:
       - ./data/:/app/data/
       - ./model/:/app/model/
