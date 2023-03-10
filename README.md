@@ -47,8 +47,8 @@ To run the anomaly detection you can use the following command:
 - The script will use the first model it finds in ./model to perform the detection. It is assumed the data looks like the data used for model selection. No additional metadata file is needed in this stage, as this is stored in the model and it is assumed that the metadata is identical during both stages.
 - This model will be used to perform detection on all data files in ./data and output a dictionary named `anomalies.json` where the keys are the names of the datafiles, and the values will be the list of indexes where anomalies were found.
 
-## Metadata
-Depending on the input data and desired functionality, some additional metadata may be necessary. This metadata is expected in a json file with an identical name to the input data file. This metadata is only needed once during the model selection stage, as the metadata will subsequently be saved in the model and automatically retrieved for the detection. For numpy arrays saved using numpy.save, and generally csv or excel files, no metadata should be required unless specific functionality is needed.
+## Config file
+Depending on the input data and desired functionality, some additional information may be necessary. This metadata is expected in a json file with an identical name to the input data file. This metadata is only needed once during the model selection stage, as the metadata will subsequently be saved in the model and automatically retrieved for the detection. For numpy arrays saved using numpy.save, and generally csv or excel files, no config should be required unless specific functionality is needed.
 
 Please find below a description of the expected metadata:
 |     General               |                                                                                                                                                                                                                                                                                                                                                                      |                                                     |
