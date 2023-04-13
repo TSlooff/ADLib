@@ -17,7 +17,7 @@ To run the anomaly detection you can use the following command:
 - This model will be used to perform detection on all data files in /app/data, which has the volume set to ./data/, and output a dictionary named `anomalies.json` where the keys are the names of the datafiles, and the values will be the list of indexes where anomalies were found.
 
 # Use AD Lib directly with Python
-To use the scripts directly is very similar to using the docker. The only requirement is to set up python with the correct dependencies beforehand.
+To use the scripts directly is very similar to using the docker. The only requirement is to set up python (version 3.9 is used in the docker) with the correct dependencies beforehand.
 I would recommend to use a virtual environment for this. To set up the requirements:
 
 ```

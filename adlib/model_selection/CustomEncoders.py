@@ -4,6 +4,11 @@ from htm.bindings.sdr import SDR
 import numpy as np
 from pyproj import Proj, transform
 import math
+import json
+
+from htm.encoders.scalar_encoder import ScalarEncoder
+from htm.encoders.rdse import RDSE
+from htm.encoders.date_encoder import DateEncoder
 
 # From http://spatialreference.org/ref/epsg/popular-visualisation-crs-mercator/
 # This function now project from epsg:4326 (which is how we have long, lat coordinates) to epsg:3857 which is in meters. 
@@ -103,16 +108,14 @@ class MultiEncoder():
         self.size = sum([e.size for e in encoders])
         if self._n == 1:
             # only 1 encoder, overwrite encode method
-            self.encode = self.__encode_single_val
-            self.encoder = encoders[0]
-        else:
-            self.encoders = encoders
+            self.encode = self.encode_single_val
+        self.encoders = encoders
         
-    def __encode_single_val(self, input_data):
+    def encode_single_val(self, input_data):
         """
         special method for when input_data will be a single value.
         """
-        return self.encoder.encode(input_data[0])
+        return self.encoders[0].encode(input_data[0])
 
     def encode(self, input_data):
         """
@@ -125,3 +128,31 @@ class MultiEncoder():
     
     def get_output_size(self):
         return self.size
+    
+    def writeToString(self):
+        """
+        similar to encoder.writeToString, but will return a list of dictionaries based on the writetostring's of the individual encoders
+        """
+        return [json.loads(e.writeToString()) for e in self.encoders]
+    
+    @staticmethod
+    def loadFromString(list_of_dicts):
+        """
+        takes as input a list of serialized encoders, as output by self.writeToString()
+        return an instance of MultiEncoder with the appropriate encoders
+        """
+        input_list = []
+        for d in list_of_dicts:
+            if d['name'] == 'RandomDistributedScalarEncoder':
+                e = RDSE()
+            elif d['name'] == 'DateEncoder':
+                e = DateEncoder()
+            elif d['name'] == 'ScalarEncoder':
+                e = ScalarEncoder()
+            else:
+                print(f"error, unknown encoder type: {d['name']}")
+                e = None
+            e.loadFromString(json.dumps(d).encode())
+            input_list.append(e)
+        # TODO
+        return MultiEncoder(input_list)

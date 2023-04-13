@@ -153,10 +153,13 @@ def enforce_param_bounds(path, params):
     
     return nobounds
 
+data_dir = "./data/"
+model_dir = "./model/"
+
 def main(parameters, argv=None, verbose=True):
     # set up model and predictor
     # do it before loading data because parameters need to be validated
-    data_paths = [d for d in glob.glob("/app/data/*") if d[-5:] != ".json"]
+    data_paths = [d for d in glob.glob(data_dir + "*") if d[-5:] != ".json"]
     data, metadata = parse(pathlib.Path(data_paths[0]))
 
     admodel = ADModel.create_model(parameters, metadata)
@@ -174,7 +177,6 @@ def main(parameters, argv=None, verbose=True):
     for i in range(len(train)):
         admodel.detect(train[i], learn=True)
         #pred.learn(i, admodel.tms[-1].getActiveCells(), (train[i] / parameters['pred_resolution']).astype('uint'))
-        
 
     # Testing Loop
     mse = np.zeros_like(metadata['columns_to_process'], dtype='float64')
@@ -193,162 +195,163 @@ def main(parameters, argv=None, verbose=True):
     print(f'mse:{mse}')
     return -mse # module will look to maximize the output value, so negate it to find the smallest mse
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-v', '--verbose', action='store_true',
-    help='Passed onto the experiment\'s main function.')
-parser.add_argument('--tag', type=str,
-    help='Optional string appended to the name of the AE directory.  Use tags to '
-            'keep multiple variants of an experiment alive and working at the same time.')
-parser.add_argument('-n', '--processes',  type=int, default=os.cpu_count(),
-    help='Number of experiments to run simultaneously, defaults to the number of CPU cores available.')
-parser.add_argument('--time_limit',  type=float, default=None,
-    help='Hours, time limit for each run of the experiment.',)
-parser.add_argument('--global_time', type=float, default=15,
-    help='Minutes, time limit for the whole script (i.e. all experiments combined)')
-parser.add_argument('--memory_limit',  type=float, default=None,
-    help='Gigabytes, RAM memory limit for each run of the experiment.')
-parser.add_argument('--parse',  action='store_true',
-    help='Parse the lab report and write it back to the same file, then exit.')
-parser.add_argument('--rmz', action='store_true',
-    help='Remove all experiments which have zero attempts.')
-parser.add_argument('experiment', nargs=argparse.REMAINDER,
-    help='Name of experiment module followed by its command line arguments.')
-parser.add_argument('-s', '--skip', action='store_true',
-    help='In case the model selection can be skipped.')
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-v', '--verbose', action='store_true',
+        help='Passed onto the experiment\'s main function.')
+    parser.add_argument('--tag', type=str,
+        help='Optional string appended to the name of the AE directory.  Use tags to '
+                'keep multiple variants of an experiment alive and working at the same time.')
+    parser.add_argument('-n', '--processes',  type=int, default=os.cpu_count(),
+        help='Number of experiments to run simultaneously, defaults to the number of CPU cores available.')
+    parser.add_argument('--time_limit',  type=float, default=None,
+        help='Hours, time limit for each run of the experiment.',)
+    parser.add_argument('--global_time', type=float, default=15,
+        help='Minutes, time limit for the whole script (i.e. all experiments combined)')
+    parser.add_argument('--memory_limit',  type=float, default=None,
+        help='Gigabytes, RAM memory limit for each run of the experiment.')
+    parser.add_argument('--parse',  action='store_true',
+        help='Parse the lab report and write it back to the same file, then exit.')
+    parser.add_argument('--rmz', action='store_true',
+        help='Remove all experiments which have zero attempts.')
+    parser.add_argument('experiment', nargs=argparse.REMAINDER,
+        help='Name of experiment module followed by its command line arguments.')
+    parser.add_argument('-s', '--skip', action='store_true',
+        help='In case the model selection can be skipped.')
 
 
-all_optimizers = [
-    optimizers.EvaluateDefaultParameters,
-    optimizers.EvaluateAllExperiments,
-    optimizers.EvaluateBestExperiment,
-    optimizers.EvaluateHashes,
-    optimizers.GridSearch,
-    optimizers.CombineBest,
-    CustomParticleSwarmOptimization,
-]
-assert( all( issubclass(Z, optimizers.BaseOptimizer) for Z in all_optimizers))
-for method in all_optimizers:
-    method.add_arguments(parser)
+    all_optimizers = [
+        optimizers.EvaluateDefaultParameters,
+        optimizers.EvaluateAllExperiments,
+        optimizers.EvaluateBestExperiment,
+        optimizers.EvaluateHashes,
+        optimizers.GridSearch,
+        optimizers.CombineBest,
+        CustomParticleSwarmOptimization,
+    ]
+    assert( all( issubclass(Z, optimizers.BaseOptimizer) for Z in all_optimizers))
+    for method in all_optimizers:
+        method.add_arguments(parser)
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
-if args.skip:
-    print("skip flag")
-    exit()
+    if args.skip:
+        print("skip flag")
+        exit()
 
-# default if there is no remainder, since there is no default accepted with argparse.REMAINDER
-if args.experiment == []:
-    args.experiment = [__file__]
+    # default if there is no remainder, since there is no default accepted with argparse.REMAINDER
+    if args.experiment == []:
+        args.experiment = [__file__]
 
-selected_method = [X for X in all_optimizers if X.use_this_optimizer(args)]
+    selected_method = [X for X in all_optimizers if X.use_this_optimizer(args)]
 
-# need to retrieve metadata to recreate model
-# need data to set up encoder default parameters
-data_path = pathlib.Path([d for d in glob.glob("/app/data/*") if d[-5:] != ".json"][0])
-data, metadata = parse(data_path)
+    # need to retrieve metadata to recreate model
+    # need data to set up encoder default parameters
+    data_path = pathlib.Path([d for d in glob.glob(data_dir + "*") if d[-5:] != ".json"][0])
+    data, metadata = parse(data_path)
 
-if args.tag is None:
-    args.tag = data_path.stem
-    print(f"automatically tagged the experiment with {args.tag}")
+    if args.tag is None:
+        args.tag = data_path.stem
+        print(f"automatically tagged the experiment with {args.tag}")
 
-# load in default parameters base
-with open("adlib/model_selection/base_params.json", "r") as f:
-    default_parameters = json.load(f)
+    # load in default parameters base
+    with open("adlib/model_selection/base_params.json", "r") as f:
+        default_parameters = json.load(f)
 
-    for k, v in default_parameters.items():
-        # change lists to tuples because this is required by ae
-        if type(v) == list:
-            default_parameters[k] = tuple(v)
+        for k, v in default_parameters.items():
+            # change lists to tuples because this is required by ae
+            if type(v) == list:
+                default_parameters[k] = tuple(v)
 
-col_to_process = metadata.get('columns_to_process')
-# encoder for each column to process
-default_parameters['num_encoders'] = len(col_to_process)
+    col_to_process = metadata.get('columns_to_process')
+    # encoder for each column to process
+    default_parameters['num_encoders'] = len(col_to_process)
 
-encoder_types = ''
+    encoder_types = ''
 
-for c, val in enumerate(data[0].values()):
-    if isinstance(val, (np.floating, float)):
-        # RDSE encoder
-        default_parameters[f'encoder_{c}_type'] = 1
-        default_parameters[f'encoder_{c}_size'] = 2000
-        default_parameters[f'encoder_{c}_resolution'] = 0.05
-    elif isinstance(val, (np.datetime64, pd.Timestamp, datetime.datetime)):
-        # datetime encoder
-        default_parameters[f'encoder_{c}_type'] = 2
-    elif isinstance(val, (int, np.integer)):
-        # integer, treated as categories
-        default_parameters[f'encoder_{c}_type'] = 3
-        default_parameters[f'encoder_{c}_size'] = 2000
-    elif isinstance(val, (str, np.str)):
-        # string, treated as categories but needs to be transformed to integers first.
-        default_parameters[f'encoder_{c}_type'] = 4
-        default_parameters[f'encoder_{c}_size'] = 2000
-    else:
-        raise NotImplementedError(f"unsupported data type in data: {type(val)} in column {c}")
+    for c, val in enumerate(data[0].values()):
+        if isinstance(val, (np.floating, float)):
+            # RDSE encoder
+            default_parameters[f'encoder_{c}_type'] = 1
+            default_parameters[f'encoder_{c}_size'] = 2000
+            default_parameters[f'encoder_{c}_resolution'] = 0.05
+        elif isinstance(val, (np.datetime64, pd.Timestamp, datetime.datetime)):
+            # datetime encoder
+            default_parameters[f'encoder_{c}_type'] = 2
+        elif isinstance(val, (int, np.integer)):
+            # integer, treated as categories
+            default_parameters[f'encoder_{c}_type'] = 3
+            default_parameters[f'encoder_{c}_size'] = 2000
+        elif isinstance(val, (str, np.str)):
+            # string, treated as categories but needs to be transformed to integers first.
+            default_parameters[f'encoder_{c}_type'] = 4
+            default_parameters[f'encoder_{c}_size'] = 2000
+        else:
+            raise NotImplementedError(f"unsupported data type in data: {type(val)} in column {c}")
 
-    # always add the encoder type to this string since its value should never be changed
-    encoder_types += f",['encoder_{c}_type']"
+        # always add the encoder type to this string since its value should never be changed
+        encoder_types += f",['encoder_{c}_type']"
 
-with open("adlib/model_selection/default_params.json", "w") as f:
-    json.dump(default_parameters, f, indent=4)
+    with open("adlib/model_selection/default_params.json", "w") as f:
+        json.dump(default_parameters, f, indent=4)
 
-ae = optim.Laboratory(args.experiment,
-    tag      = args.tag,
-    verbose  = args.verbose)
-ae.save()
-print("Lab Report written to %s"%ae.lab_report)
-
-if args.parse:
-    pass
-
-elif args.rmz:
-    for x in ae.experiments:
-        if x.attempts == 0:
-            ae.experiments.remove(x)
-            ae.experiment_ids.pop(hash(x))
+    ae = optim.Laboratory(args.experiment,
+        tag      = args.tag,
+        verbose  = args.verbose)
     ae.save()
-    print("Removed all experiments which had not yet been attempted.")
+    print("Lab Report written to %s"%ae.lab_report)
 
-elif not selected_method:
-    print("Error: missing argument for what to to.")
-elif len(selected_method) > 1:
-    print("Error: too many argument for what to to.")
-else:
-    if selected_method[0] == CustomParticleSwarmOptimization:
-        freezing_rules = [
-            ParamFreezingRule("['model_type'],['num_encoders']"+encoder_types),
-            ParamFreezingRule(freeze_unused_layers),
-        ]
-        ae.method = selected_method[0](ae, freezing_rules, enforce_param_bounds, args)
+    if args.parse:
+        pass
+
+    elif args.rmz:
+        for x in ae.experiments:
+            if x.attempts == 0:
+                ae.experiments.remove(x)
+                ae.experiment_ids.pop(hash(x))
+        ae.save()
+        print("Removed all experiments which had not yet been attempted.")
+
+    elif not selected_method:
+        print("Error: missing argument for what to to.")
+    elif len(selected_method) > 1:
+        print("Error: too many argument for what to to.")
     else:
-        ae.method = selected_method[0]( ae, args )
+        if selected_method[0] == CustomParticleSwarmOptimization:
+            freezing_rules = [
+                ParamFreezingRule("['model_type'],['num_encoders']"+encoder_types),
+                ParamFreezingRule(freeze_unused_layers),
+            ]
+            ae.method = selected_method[0](ae, freezing_rules, enforce_param_bounds, args)
+        else:
+            ae.method = selected_method[0]( ae, args )
 
-    giga = 2**30
-    if args.memory_limit is not None:
-        memory_limit = int(args.memory_limit * giga)
-    else:
-        from psutil import virtual_memory
-        available_memory = virtual_memory().available
-        memory_limit = int(available_memory / args.processes)
-        print("Memory Limit %.2g GB per instance."%(memory_limit / giga))
+        giga = 2**30
+        if args.memory_limit is not None:
+            memory_limit = int(args.memory_limit * giga)
+        else:
+            from psutil import virtual_memory
+            available_memory = virtual_memory().available
+            memory_limit = int(available_memory / args.processes)
+            print("Memory Limit %.2g GB per instance."%(memory_limit / giga))
 
 
-    t = multiprocessing.Process(target = ae.run, args=(args.processes, args.time_limit, memory_limit))
-    t.start()
-    print(f"running experiments in process for {args.global_time} minutes")
-    time.sleep(60*args.global_time)
-    t.terminate()
+        t = multiprocessing.Process(target = ae.run, args=(args.processes, args.time_limit, memory_limit))
+        t.start()
+        print(f"running experiments in process for {args.global_time} minutes")
+        time.sleep(60*args.global_time)
+        t.terminate()
 
-    best = max(ae.experiments, key = lambda x: x.mean() )
-    print("best parameters: ", best.parameters)
-    mdl_loc = "/app/model/best_model.h5"
-    best_mdl = ADModel.create_model(best.parameters, metadata)
-    best_mdl.save(mdl_loc)
-    print(f"model saved at {mdl_loc}")
+        best = max(ae.experiments, key = lambda x: x.mean() )
+        print("best parameters: ", best.parameters)
+        mdl_loc = model_dir + "best_model.h5"
+        best_mdl = ADModel.create_model(best.parameters, metadata)
+        best_mdl.save(mdl_loc)
+        print(f"model saved at {mdl_loc}")
 
-    # ae.run( processes    = args.processes,
-    #         time_limit   = args.time_limit,
-    #         memory_limit = memory_limit,)
+        # ae.run( processes    = args.processes,
+        #         time_limit   = args.time_limit,
+        #         memory_limit = memory_limit,)
 
-print("Exit.")
+    print("Exit.")
 

@@ -331,7 +331,8 @@ class SDRDecoder:
                 # at least some percentage of overlap with sdr to be taken into account
                 out += d_count * np.array(d)
                 total += d_count
-        out /= total
+        if total > 0:
+            out /= total
         return out
 
     def se(self, prediction, actual_data):

@@ -106,7 +106,7 @@ class CustomParticleData:
                 # apply this to position + velocity to ensure a minimum / maximum.
                 self.parameters.apply( path, self.param_bindings(path, self.parameters)(position + velocity ))
         # double check the hierarchical ones, otherwise ordering may cause malfunction
-        for path in [p for p in self.parameters.enumerate() if any(m in p for m in ['activationThreshold', 'localAreaDensity'])]:
+        for path in [p for p in self.parameters.enumerate() if any(m in p for m in ['activationThreshold', 'localAreaDensity', 'columnDimensions'])]:
             # at this point, this is position_prev + velocity_prev. SO don't also get velocity. Just apply binding again.
             position = self.parameters.get( path )
             self.parameters.apply(path, self.param_bindings(path, self.parameters)(position))
