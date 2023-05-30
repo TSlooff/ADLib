@@ -5,6 +5,11 @@ import sys
 import numpy as np
 import argparse
 import pathlib
+
+# append directory 3 level up to path, allows for importing from adlib module
+p = pathlib.Path(__file__).parents[2]
+sys.path.append(str(p))
+
 import logging
 import logging.config
 from adlib.data_handlers import parse

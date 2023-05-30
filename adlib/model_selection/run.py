@@ -5,7 +5,13 @@ import sys
 import argparse
 import os
 import pathlib
-import multiprocessing
+
+# append directory 3 level up to path, allows for importing from adlib module
+p = pathlib.Path(__file__).parents[2]
+sys.path.append(str(p))
+
+# import multiprocessing
+import threading
 import time
 import re
 import htm.optimization.optimizers as optimizers
@@ -14,8 +20,7 @@ from functools import partial
 import glob
 import json
 import datetime
-
-# tracing
+from tqdm import tqdm
 import faulthandler
 faulthandler.enable()
 
@@ -30,7 +35,7 @@ from htm.algorithms import Predictor
 from adlib.data_handlers import parse
 from adlib.model_selection.model import ADModel
 
-import htm.optimization.ae as optim
+import adlib.model_selection.ae as optim
 
 with open("adlib/model_selection/default_params.json", "r") as f:
         default_parameters = json.load(f)
@@ -168,19 +173,21 @@ def main(parameters, argv=None, verbose=True):
     # # TODO how to handle missing data in general -> don't try to use an incomplete dataset to find a model
     #data[np.where(data == 1e20)] = 0
 
-    test_cut = int(0.8 * len(data))
+    test_cut = int(0.9 * len(data))
     train = data[:test_cut]
     test = data[test_cut:]
 
     
     # Training Loop
-    for i in range(len(train)):
+    print("training..")
+    for i in tqdm(range(len(train))):
         admodel.detect(train[i], learn=True)
         #pred.learn(i, admodel.tms[-1].getActiveCells(), (train[i] / parameters['pred_resolution']).astype('uint'))
 
     # Testing Loop
     mse = np.zeros_like(metadata['columns_to_process'], dtype='float64')
-    for i in range(len(test) - 1):
+    print("testing..")
+    for i in tqdm(range(len(test) - 1)):
         admodel.detect(test[i], learn=False)
         prediction = admodel.predict()
         #prediction = np.argmax(pred.infer(admodel.tms[-1].getActiveCells())[1])*parameters['pred_resolution']
@@ -196,6 +203,10 @@ def main(parameters, argv=None, verbose=True):
     return -mse # module will look to maximize the output value, so negate it to find the smallest mse
 
 if __name__ == "__main__":
+
+    # mse = main(default_parameters)
+    # exit()
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-v', '--verbose', action='store_true',
         help='Passed onto the experiment\'s main function.')
@@ -295,9 +306,12 @@ if __name__ == "__main__":
     with open("adlib/model_selection/default_params.json", "w") as f:
         json.dump(default_parameters, f, indent=4)
 
-    ae = optim.Laboratory(args.experiment,
-        tag      = args.tag,
-        verbose  = args.verbose)
+    print(args.experiment)
+
+    ae = optim.Laboratory(experiment_argv=args.experiment,
+                          tag      = args.tag,
+                          verbose  = args.verbose)
+    
     ae.save()
     print("Lab Report written to %s"%ae.lab_report)
 
@@ -336,14 +350,17 @@ if __name__ == "__main__":
             print("Memory Limit %.2g GB per instance."%(memory_limit / giga))
 
 
-        t = multiprocessing.Process(target = ae.run, args=(args.processes, args.time_limit, memory_limit))
+        t = threading.Thread(target = ae.run, args=(args.processes, args.time_limit, memory_limit), daemon=True)
         t.start()
         print(f"running experiments in process for {args.global_time} minutes")
         time.sleep(60*args.global_time)
-        t.terminate()
+        ae.finish()
+        t.join()
+
+        # ae.run(args.processes, args.time_limit, memory_limit)
 
         best = max(ae.experiments, key = lambda x: x.mean() )
-        print("best parameters: ", best.parameters)
+        # print("best parameters: ", best.parameters)
         mdl_loc = model_dir + "best_model.h5"
         best_mdl = ADModel.create_model(best.parameters, metadata)
         best_mdl.save(mdl_loc)
@@ -354,4 +371,4 @@ if __name__ == "__main__":
         #         memory_limit = memory_limit,)
 
     print("Exit.")
-
+    exit(0)
