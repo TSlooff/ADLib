@@ -134,4 +134,5 @@ dmypy.json
 *_data/
 data/
 model/
-everest_ad_script/
+ad_env/
+tmp/
