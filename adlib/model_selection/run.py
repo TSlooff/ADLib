@@ -306,8 +306,6 @@ if __name__ == "__main__":
     with open("adlib/model_selection/default_params.json", "w") as f:
         json.dump(default_parameters, f, indent=4)
 
-    print(args.experiment)
-
     ae = optim.Laboratory(experiment_argv=args.experiment,
                           tag      = args.tag,
                           verbose  = args.verbose)
