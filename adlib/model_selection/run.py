@@ -10,7 +10,8 @@ import pathlib
 p = pathlib.Path(__file__).parents[2]
 sys.path.append(str(p))
 
-# import multiprocessing
+import logging
+import logging.config
 import threading
 import time
 import re
@@ -34,8 +35,10 @@ from htm.algorithms import Predictor
 
 from adlib.data_handlers import parse
 from adlib.model_selection.model import ADModel
-
 import adlib.model_selection.ae as optim
+
+logging.config.fileConfig('adlib/logging/logging.conf')
+logger = logging.getLogger('main')
 
 with open("adlib/model_selection/default_params.json", "r") as f:
         default_parameters = json.load(f)
@@ -177,29 +180,22 @@ def main(parameters, argv=None, verbose=True):
     train = data[:test_cut]
     test = data[test_cut:]
 
-    
     # Training Loop
-    print("training..")
     for i in tqdm(range(len(train))):
         admodel.detect(train[i], learn=True)
         #pred.learn(i, admodel.tms[-1].getActiveCells(), (train[i] / parameters['pred_resolution']).astype('uint'))
 
     # Testing Loop
     mse = np.zeros_like(metadata['columns_to_process'], dtype='float64')
-    print("testing..")
     for i in tqdm(range(len(test) - 1)):
         admodel.detect(test[i], learn=False)
         prediction = admodel.predict()
         #prediction = np.argmax(pred.infer(admodel.tms[-1].getActiveCells())[1])*parameters['pred_resolution']
-        # print(pred.infer(admodel.tms[-1].getActiveCells()))
         mse += admodel.decoder.se(prediction, test[i+1])
 
     mse = mse/(max(len(test)-1, 1))
 
-    print("mse:", mse)
     mse = np.sum(mse)
-
-    print(f'mse:{mse}')
     return -mse # module will look to maximize the output value, so negate it to find the smallest mse
 
 if __name__ == "__main__":
@@ -247,7 +243,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.skip:
-        print("skip flag")
+        logger.info("skip flag")
         exit()
 
     # default if there is no remainder, since there is no default accepted with argparse.REMAINDER
@@ -263,7 +259,7 @@ if __name__ == "__main__":
 
     if args.tag is None:
         args.tag = data_path.stem
-        print(f"automatically tagged the experiment with {args.tag}")
+        logger.info(f"automatically tagged the experiment with {args.tag}")
 
     # load in default parameters base
     with open("adlib/model_selection/base_params.json", "r") as f:
@@ -311,7 +307,7 @@ if __name__ == "__main__":
                           verbose  = args.verbose)
     
     ae.save()
-    print("Lab Report written to %s"%ae.lab_report)
+    logger.info("Lab Report written to %s"%ae.lab_report)
 
     if args.parse:
         pass
@@ -322,12 +318,12 @@ if __name__ == "__main__":
                 ae.experiments.remove(x)
                 ae.experiment_ids.pop(hash(x))
         ae.save()
-        print("Removed all experiments which had not yet been attempted.")
+        logger.info("Removed all experiments which had not yet been attempted.")
 
     elif not selected_method:
-        print("Error: missing argument for what to to.")
+        logger.error("Error: missing argument for what to to.")
     elif len(selected_method) > 1:
-        print("Error: too many argument for what to to.")
+        logger.error("Error: too many argument for what to to.")
     else:
         if selected_method[0] == CustomParticleSwarmOptimization:
             freezing_rules = [
@@ -345,12 +341,12 @@ if __name__ == "__main__":
             from psutil import virtual_memory
             available_memory = virtual_memory().available
             memory_limit = int(available_memory / args.processes)
-            print("Memory Limit %.2g GB per instance."%(memory_limit / giga))
+            logger.info("Memory Limit %.2g GB per instance."%(memory_limit / giga))
 
 
         t = threading.Thread(target = ae.run, args=(args.processes, args.time_limit, memory_limit), daemon=True)
         t.start()
-        print(f"running experiments in process for {args.global_time} minutes")
+        logger.info(f"running experiments in process for {args.global_time} minutes")
         time.sleep(60*args.global_time)
         ae.finish()
         t.join()
@@ -358,15 +354,13 @@ if __name__ == "__main__":
         # ae.run(args.processes, args.time_limit, memory_limit)
 
         best = max(ae.experiments, key = lambda x: x.mean() )
-        # print("best parameters: ", best.parameters)
         mdl_loc = model_dir + "best_model.h5"
         best_mdl = ADModel.create_model(best.parameters, metadata)
         best_mdl.save(mdl_loc)
-        print(f"model saved at {mdl_loc}")
+        logger.info(f"model saved at {mdl_loc}")
 
         # ae.run( processes    = args.processes,
         #         time_limit   = args.time_limit,
         #         memory_limit = memory_limit,)
 
-    print("Exit.")
     exit(0)

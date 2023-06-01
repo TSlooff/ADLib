@@ -16,6 +16,11 @@ import scipy.stats
 
 from htm.optimization.parameter_set import ParameterSet
 
+import logging
+import logging.config
+logging.config.fileConfig('adlib/logging/logging.conf')
+logger = logging.getLogger('main')
+
 acceptable_exceptions = [
     TypeError,
     ValueError,
@@ -356,7 +361,7 @@ class Laboratory:
                     self.method.collect_results( X.parameters, trial.score )
                     self.save()     # Write the updated Lab Report to file.
         
-        print(f"finish() called, waiting on {len(pool)} experiments to finish before exiting.", end="")
+        logger.info(f"finish() called, waiting on {len(pool)} experiments to finish before exiting.")
         # do some final wrap-up
         while len(pool) > 0:
             for idx in range(len(pool)-1, -1, -1):
@@ -370,7 +375,7 @@ class Laboratory:
                     self.method.collect_results( X.parameters, trial.score )
                     self.save()     # Write the updated Lab Report to file.
 
-                    print(f"\rfinish() called, waiting on {len(pool)} experiments to finish before exiting.", end="")
+                    logger.info(f"Experiment finished, waiting on {len(pool)} experiments to finish before exiting.")
     
     def finish(self):
         self.end = True
