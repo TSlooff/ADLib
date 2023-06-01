@@ -128,3 +128,11 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .DS_Store
+
+# custom
+*.ipynb
+*_data/
+data/
+model/
+ad_env/
+tmp/

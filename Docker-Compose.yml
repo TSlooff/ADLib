@@ -1,0 +1,8 @@
+services:
+  anomaly_detection:
+    image: tslooff/adlib
+    volumes:
+      - ./data/:/app/data/
+      - ./model/:/app/model/
+      - ./adlib/:/app/adlib/
+    working_dir: /app

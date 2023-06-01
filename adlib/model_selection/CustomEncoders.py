@@ -4,6 +4,11 @@ from htm.bindings.sdr import SDR
 import numpy as np
 from pyproj import Proj, transform
 import math
+import json
+
+from htm.encoders.scalar_encoder import ScalarEncoder
+from htm.encoders.rdse import RDSE
+from htm.encoders.date_encoder import DateEncoder
 
 # From http://spatialreference.org/ref/epsg/popular-visualisation-crs-mercator/
 # This function now project from epsg:4326 (which is how we have long, lat coordinates) to epsg:3857 which is in meters. 
@@ -95,27 +100,59 @@ class GeoGridEncoder(GridCellEncoder):
         return self.custom_size
         
 class MultiEncoder():
-    def __init__(self, encoders):
+    def __init__(self, encoders:list):
         """
-        :encoders: list of encoders to use in order: latitude, longitude, speed
+        :encoders: list of encoders to use. importantly: should be in same order as how a data point will be processed.
         """
+        self._n = len(encoders)
+        self.size = sum([e.size for e in encoders])
+        if self._n == 1:
+            # only 1 encoder, overwrite encode method
+            self.encode = self.encode_single_val
         self.encoders = encoders
-        self.custom_size = sum([e.size for e in self.encoders])
+        
+    def encode_single_val(self, input_data):
+        """
+        special method for when input_data will be a single value.
+        """
+        return self.encoders[0].encode(input_data[0])
 
     def encode(self, input_data):
         """
-        This function serves as a wrapper for GridCellEncoder where the longitude and latitude are automatically
-        changed to a projection using meters, such that the periods of the grid cell encoder make sense
-        :param: input_data (tuple) (latitude, longitude, speed)
+        Encodes the given input_data, assuming an equal amount of columns as the number of encoders
+        :param: input_data n-dimensional input data, where n = number of encoders
         """
-        (latitude, longitude, speed) = input_data
-        sdr_encoding = SDR(self.custom_size)
-        sdr_encoding.concatenate([
-            self.encoders[0].encode(latitude), 
-            self.encoders[1].encode(longitude), 
-            self.encoders[2].encode(speed)]
-        )
+        sdr_encoding = SDR(self.size)
+        sdr_encoding.concatenate([self.encoders[i].encode(input_data[i]) for i in range(self._n)])
         return sdr_encoding
     
     def get_output_size(self):
-        return self.custom_size
+        return self.size
+    
+    def writeToString(self):
+        """
+        similar to encoder.writeToString, but will return a list of dictionaries based on the writetostring's of the individual encoders
+        """
+        return [json.loads(e.writeToString()) for e in self.encoders]
+    
+    @staticmethod
+    def loadFromString(list_of_dicts):
+        """
+        takes as input a list of serialized encoders, as output by self.writeToString()
+        return an instance of MultiEncoder with the appropriate encoders
+        """
+        input_list = []
+        for d in list_of_dicts:
+            if d['name'] == 'RandomDistributedScalarEncoder':
+                e = RDSE()
+            elif d['name'] == 'DateEncoder':
+                e = DateEncoder()
+            elif d['name'] == 'ScalarEncoder':
+                e = ScalarEncoder()
+            else:
+                print(f"error, unknown encoder type: {d['name']}")
+                e = None
+            e.loadFromString(json.dumps(d).encode())
+            input_list.append(e)
+        # TODO
+        return MultiEncoder(input_list)
