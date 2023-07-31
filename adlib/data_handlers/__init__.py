@@ -47,6 +47,9 @@ def slice_cols(data, metadata):
         # usecols is used now to slice the dataframes, so nothing to do.
         return data, metadata
     else:
+        if len(data.shape) == 1:
+            # only 1 dimension, so add 1
+            data = data[:, None]
         data = data[:, col_to_process]
     return data, metadata
 
