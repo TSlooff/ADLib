@@ -376,6 +376,8 @@ class Laboratory:
                     self.save()     # Write the updated Lab Report to file.
 
                     logger.info(f"Experiment finished, waiting on {len(pool)} experiments to finish before exiting.")
+            
+            time.sleep(2)
     
     def finish(self):
         self.end = True
