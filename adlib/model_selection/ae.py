@@ -19,7 +19,7 @@ from htm.optimization.parameter_set import ParameterSet
 import logging
 import logging.config
 logging.config.fileConfig('adlib/logging/logging.conf')
-logger = logging.getLogger('main')
+logger = logging.getLogger('ae')
 
 acceptable_exceptions = [
     TypeError,
@@ -361,9 +361,11 @@ class Laboratory:
                     self.method.collect_results( X.parameters, trial.score )
                     self.save()     # Write the updated Lab Report to file.
         
-        logger.info(f"finish() called, waiting on {len(pool)} experiments to finish before exiting.")
-        # do some final wrap-up
-        while len(pool) > 0:
+        logger.info(f"finish() called, waiting 5 minutes on completion of {len(pool)} experiments.")
+        endtime = time.perf_counter() + 300
+
+        while time.perf_counter() < endtime:
+            # Check for jobs which have finished.
             for idx in range(len(pool)-1, -1, -1):
                 if not pool[idx].is_alive():
                     trial = pool.pop( idx )
@@ -375,9 +377,14 @@ class Laboratory:
                     self.method.collect_results( X.parameters, trial.score )
                     self.save()     # Write the updated Lab Report to file.
 
-                    logger.info(f"Experiment finished, waiting on {len(pool)} experiments to finish before exiting.")
-            
-            time.sleep(2)
+            time.sleep(5)
+
+        logger.info(f"5 minutes have finished. Dropping {len(pool)} experiments and exiting.")
+        # done waiting. just let the processes hang and exit the program.
+        for idx in range(len(pool)-1, -1, -1):
+            pool[idx].terminate()
+            pool[idx].kill()
+            pool.pop(idx)
     
     def finish(self):
         self.end = True
@@ -453,7 +460,7 @@ class Worker(Process):
             return False
         if self.output.poll(0):
             def watchdog():
-                if self.is_alive():
+                if Process.is_alive(self):
                     print("Warning: experiment returned but process still alive, terminating ...")
                     self.terminate()
             threading.Timer( 60, watchdog ).start()
@@ -496,6 +503,6 @@ class Worker(Process):
                     sys.exit(1)
         else:
             # No output from python?  Something went very wrong!
-            print( self.journal )
-            print("Error, Exit.")
-            sys.exit(1)
+            logger.error(f"No output from python: {Process.is_alive(self)} - {self.output.poll(0)} - {self.output.recv()}")
+            # self.terminate()
+            # sys.exit(1)

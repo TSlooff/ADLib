@@ -171,12 +171,10 @@ def main(parameters, argv=None, verbose=True):
     data, metadata = parse(pathlib.Path(data_paths[0]))
 
     admodel = ADModel.create_model(parameters, metadata)
-    #pred = Predictor(steps=[1], alpha=parameters['alpha'])
 
-    # # TODO how to handle missing data in general -> don't try to use an incomplete dataset to find a model
-    #data[np.where(data == 1e20)] = 0
-
-    test_cut = int(0.9 * len(data))
+    test_cut = max(int(0.90 * len(data)),len(data)-500)
+    # this is highly imbalanced because the prediction step (which is not necessary for AD)
+    # is highly costly so this is reduced as much as possible.
     train = data[:test_cut]
     test = data[test_cut:]
 
@@ -186,9 +184,9 @@ def main(parameters, argv=None, verbose=True):
         #pred.learn(i, admodel.tms[-1].getActiveCells(), (train[i] / parameters['pred_resolution']).astype('uint'))
 
     # Testing Loop
-    mse = np.zeros_like(metadata['columns_to_process'], dtype='float64')
+    mse = np.zeros_like(metadata['columns_to_process'], dtype=np.float32)
     for i in tqdm(range(len(test) - 1)):
-        admodel.detect(test[i], learn=False)
+        admodel.detect(test[i], learn=True)
         prediction = admodel.predict()
         #prediction = np.argmax(pred.infer(admodel.tms[-1].getActiveCells())[1])*parameters['pred_resolution']
         mse += admodel.decoder.se(prediction, test[i+1])
@@ -343,7 +341,6 @@ if __name__ == "__main__":
             memory_limit = int(available_memory / args.processes)
             logger.info("Memory Limit %.2g GB per instance."%(memory_limit / giga))
 
-
         t = threading.Thread(target = ae.run, args=(args.processes, args.time_limit, memory_limit), daemon=True)
         t.start()
         logger.info(f"running experiments in process for {args.global_time} minutes")
@@ -362,5 +359,4 @@ if __name__ == "__main__":
         # ae.run( processes    = args.processes,
         #         time_limit   = args.time_limit,
         #         memory_limit = memory_limit,)
-
     exit(0)
