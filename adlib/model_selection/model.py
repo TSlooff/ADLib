@@ -59,33 +59,33 @@ class ADModelHTM(ADModel):
         category_cols = []
 
         # set up encoders
-        num_encoders = parameters['num_encoders']
+        num_encoders = parameters['htm_num_encoders']
         encoders = [None] * num_encoders
         for e in range(num_encoders):
-            if parameters[f'encoder_{e}_type'] == 1:
+            if parameters[f'htm_encoder_{e}_type'] == 1:
                 # set up float encoder
                 rdse_params = RDSE_Parameters()
-                rdse_params.size = parameters[f'encoder_{e}_size']
-                rdse_params.resolution = parameters[f'encoder_{e}_resolution']
+                rdse_params.size = parameters[f'htm_encoder_{e}_size']
+                rdse_params.resolution = parameters[f'htm_encoder_{e}_resolution']
                 rdse_params.sparsity = 0.02
                 encoders[e] = RDSE(rdse_params)
                 arithmatic_cols.append(e)
-            elif parameters[f'encoder_{e}_type'] == 2:
+            elif parameters[f'htm_encoder_{e}_type'] == 2:
                 # set up datetime encoder
                 encoders[e] = DateEncoder(weekend=100, timeOfDay=1000, dayOfWeek=900)
                 self.datetime_cols.append(e)
-            elif parameters[f'encoder_{e}_type'] == 3:
+            elif parameters[f'htm_encoder_{e}_type'] == 3:
                 # set up category encoder for integers.
                 rdse_params = RDSE_Parameters()
-                rdse_params.size = parameters[f'encoder_{e}_size']
+                rdse_params.size = parameters[f'htm_encoder_{e}_size']
                 rdse_params.category = True
                 rdse_params.sparsity = 0.02
                 encoders[e] = RDSE(rdse_params)
                 category_cols.append(e)
-            elif parameters[f'encoder_{e}_type'] == 4:
+            elif parameters[f'htm_encoder_{e}_type'] == 4:
                 # string: set up string encoder and category encoder
                 rdse_params = RDSE_Parameters()
-                rdse_params.size = parameters[f'encoder_{e}_size']
+                rdse_params.size = parameters[f'htm_encoder_{e}_size']
                 rdse_params.category = True
                 rdse_params.sparsity = 0.02
                 encoders[e] = StringEncoder(RDSE(rdse_params))
@@ -94,15 +94,15 @@ class ADModelHTM(ADModel):
         self.encoder = MultiEncoder(encoders)
         self.decoder = SDRDecoder(arithmatic_cols, self.datetime_cols, category_cols)
 
-        num_layers = parameters['num_layers']
+        num_layers = parameters['htm_num_layers']
         # just hardcoded for now.
         max_layers = 3
 
         ## checks for valid parameter values
         if num_layers < 1:
-            raise ValueError("num_layers needs to be at least 1")
+            raise ValueError("htm_num_layers needs to be at least 1")
         elif num_layers > max_layers:
-            raise ValueError(f"num layers needs to be smaller than {max_layers} for these parameters")
+            raise ValueError(f"htm_num_layers needs to be smaller than {max_layers} for these parameters")
 
         # store this for model saving and loading
         self.parameters = parameters
@@ -113,43 +113,41 @@ class ADModelHTM(ADModel):
         
 
         for i in range(num_layers):
-            if parameters[f'l{i}_minThreshold'] < 1:
-                raise ValueError("min threshold needs to be at least 1")
+            if parameters[f'htm_l{i}_minThreshold'] < 1:
+                raise ValueError("htm_min_threshold needs to be at least 1")
 
             self.sps[i] = SP(
                 inputDimensions            = (self.encoder.size,) if i == 0 else (self.tms[i-1].getActiveCells().size,), # size not dimensions, because the cells are automatically flattened to avoid the increase in dimensions per layer
-                columnDimensions           = parameters[f'l{i}_columnDimensions'],
-                potentialRadius            = parameters[f'l{i}_potentialRadius'],
-                potentialPct               = parameters[f'l{i}_potentialPct'],
+                columnDimensions           = [parameters[f'htm_l{i}_columnDimensions']],
+                potentialRadius            = parameters[f'htm_l{i}_potentialRadius'],
+                potentialPct               = parameters[f'htm_l{i}_potentialPct'],
                 globalInhibition           = True,
-                localAreaDensity           = parameters[f'l{i}_localAreaDensity'],
-                stimulusThreshold          = int(round(parameters[f'l{i}_stimulusThreshold'])),
-                synPermInactiveDec         = parameters[f'l{i}_synPermInactiveDec'],
-                synPermActiveInc           = parameters[f'l{i}_synPermActiveInc'],
-                synPermConnected           = parameters[f'l{i}_synPermConnected'],
-                minPctOverlapDutyCycle     = parameters[f'l{i}_minPctOverlapDutyCycle'],
-                dutyCyclePeriod            = int(round(parameters[f'l{i}_dutyCyclePeriod'])),
-                boostStrength              = parameters[f'l{i}_boostStrength'],
+                localAreaDensity           = parameters[f'htm_l{i}_localAreaDensity'],
+                stimulusThreshold          = parameters[f'htm_l{i}_stimulusThreshold'],
+                synPermInactiveDec         = parameters[f'htm_l{i}_synPermInactiveDec'],
+                synPermActiveInc           = parameters[f'htm_l{i}_synPermActiveInc'],
+                synPermConnected           = parameters[f'htm_l{i}_synPermConnected'],
+                minPctOverlapDutyCycle     = parameters[f'htm_l{i}_minPctOverlapDutyCycle'],
+                dutyCyclePeriod            = parameters[f'htm_l{i}_dutyCyclePeriod'],
+                boostStrength              = parameters[f'htm_l{i}_boostStrength'],
                 seed                       = 0, # this is important, 0="random" seed which changes on each invocation
-                spVerbosity                = 99,
+                spVerbosity                = 0,
                 wrapAround                 = False)
-
-            
 
             self.tms[i] = TM(
                 columnDimensions=self.sps[i].getColumnDimensions(),
-                cellsPerColumn=parameters[f'l{i}_cellsPerColumn'],                           # default = 32
-                activationThreshold=parameters[f'l{i}_activationThreshold'],                      # default = 13
-                initialPermanence=parameters[f'l{i}_initialPermanence'],                      # default = 0.21
-                connectedPermanence=parameters[f'l{i}_connectedPermanence'],                     # default = 0.5
-                minThreshold=parameters[f'l{i}_minThreshold'],                             # default = 10
-                maxNewSynapseCount=parameters[f'l{i}_maxNewSynapseCount'],                       # default = 20
-                permanenceIncrement=parameters[f'l{i}_permanenceIncrement'],                     # default = 0.1
-                permanenceDecrement=parameters[f'l{i}_permanenceDecrement'],                    # default = 0.1
-                predictedSegmentDecrement=parameters[f'l{i}_predictedSegmentDecrement'],             # default = 0.0
+                cellsPerColumn=parameters[f'htm_l{i}_cellsPerColumn'],                           # default = 32
+                activationThreshold=parameters[f'htm_l{i}_activationThreshold'],                      # default = 13
+                initialPermanence=parameters[f'htm_l{i}_initialPermanence'],                      # default = 0.21
+                connectedPermanence=parameters[f'htm_l{i}_connectedPermanence'],                     # default = 0.5
+                minThreshold=parameters[f'htm_l{i}_minThreshold'],                             # default = 10
+                maxNewSynapseCount=parameters[f'htm_l{i}_maxNewSynapseCount'],                       # default = 20
+                permanenceIncrement=parameters[f'htm_l{i}_permanenceIncrement'],                     # default = 0.1
+                permanenceDecrement=parameters[f'htm_l{i}_permanenceDecrement'],                    # default = 0.1
+                predictedSegmentDecrement=parameters[f'htm_l{i}_predictedSegmentDecrement'],             # default = 0.0
                 seed=0,                                     # default = 42
-                maxSegmentsPerCell=parameters[f'l{i}_maxSegmentsPerCell'],                      # default = 255
-                maxSynapsesPerSegment=parameters[f'l{i}_maxSynapsesPerSegment'],                   # default = 255
+                maxSegmentsPerCell=parameters[f'htm_l{i}_maxSegmentsPerCell'],                      # default = 255
+                maxSynapsesPerSegment=parameters[f'htm_l{i}_maxSynapsesPerSegment'],                   # default = 255
                 checkInputs=True,                            # default = True
                 externalPredictiveInputs=0,                  # defualt = 0
                 anomalyMode=ANMode.RAW                       # default = ANMode.RAW

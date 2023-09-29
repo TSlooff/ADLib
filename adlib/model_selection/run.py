@@ -1,4 +1,3 @@
-import random
 import numpy as np
 import pandas as pd
 import sys
@@ -12,167 +11,90 @@ sys.path.append(str(p))
 
 import logging
 import logging.config
-import threading
 import time
-import re
-import htm.optimization.optimizers as optimizers
-from adlib.model_selection.custom_swarming import CustomParticleSwarmOptimization, ParamFreezingRule
-from functools import partial
 import glob
 import json
 import datetime
 from tqdm import tqdm
-import faulthandler
-faulthandler.enable()
-
-# HTM imports
-from htm.bindings.sdr import SDR
-from htm.algorithms import TemporalMemory as TM
-from htm.algorithms import SpatialPooler as SP
-from htm.encoders.rdse import RDSE, RDSE_Parameters
-from htm.bindings.algorithms import ANMode
-from htm.algorithms import Predictor
 
 from adlib.data_handlers import parse
 from adlib.model_selection.model import ADModel
-import adlib.model_selection.ae as optim
+
+import optuna
 
 logging.config.fileConfig('adlib/logging/logging.conf')
 logger = logging.getLogger('main')
 
-with open("adlib/model_selection/default_params.json", "r") as f:
-        default_parameters = json.load(f)
-
-        for k, v in default_parameters.items():
-            # change lists to tuples because this is required by ae
-            if type(v) == list:
-                default_parameters[k] = tuple(v)
-
-# to freeze parameters based on number of layers
-def freeze_unused_layers(params: dict):
-    freeze_keys = set()
-    num_layers = params['num_layers']
-    f = re.compile("l(\d)_.*")
-    for k in params.keys():
-        matches = f.findall(k)
-        if len(matches) > 0:
-            # the key follows the match pattern
-            if int(matches[0]) >= num_layers:
-                freeze_keys.add("['%s']" % k)
-    return freeze_keys
-
-def enforce_min_max(val, min_, max_):
-    # ensures value is in [min_, max_] inclusive
-    return max(min(max_, val), min_)
-
-def enforce_min(val, min_):
-    return max(val, min_)
-
-def enforce_max(val, max_):
-    return min(val, max_)
-
-def nobounds(val):
-    # no bounds on the value
-    return val
-
-
-# to enforce the bounds of parameters
-def enforce_param_bounds(path, params):
-    """
-    returns a function to enforce a bound on given path, if there is one.
-    takes params as input because bound may be parameter-value dependent
-    """
-    if re.search("num_layers", path):
-        return partial(enforce_min_max, min_=1, max_=3)
-    
-    if re.search("l(\d)_potentialRadius", path):
-        return partial(enforce_min, min_=10)
-    
-    if re.search("l(\d)_boostStrength", path):
-        return partial(enforce_min, min_=0)
-    
-    if re.search("l(\d)_columnDimensions", path):
-        return partial(enforce_min, min_=10)
-    
-    if re.search("l(\d)_dutyCyclePeriod", path):
-        return partial(enforce_min, min_=500)
-    
-    x = re.search("l(\d)_localAreaDensity", path)
-    if x:
-        return partial(enforce_min_max, min_=max(0.01, 1.5/np.prod(params[f'l{x.groups()[0]}_columnDimensions'])), max_=0.3)
-    
-    if re.search("l(\d)_minPctOverlapDutyCycle", path):
-        return partial(enforce_min_max, min_=0.1, max_=1.0)
-    
-    if re.search("l(\d)_potentialPct", path):
-        return partial(enforce_min_max, min_=0.1, max_=1.0)
-    
-    if re.search("l(\d)_stimulusThreshold", path):
-        return partial(enforce_min, min_=1)
-    
-    if re.search("l(\d)_synPermActiveInc", path):
-        return partial(enforce_min_max, min_=0.01, max_=0.2)
-    
-    if re.search("l(\d)_synPermConnected", path):
-        return partial(enforce_min_max, min_=0.2, max_=0.95)
-    
-    if re.search("l(\d)_synPermInactiveDec", path):
-        return partial(enforce_min_max, min_=0.01, max_=0.2)
-    
-    if re.search("l(\d)_cellsPerColumn", path):
-        return partial(enforce_min, min_=3)
-    
-    x = re.search("l(\d)_activationThreshold", path)
-    if x:
-        return partial(enforce_min, min_=params[f"l{x.groups()[0]}_minThreshold"])
-    
-    if re.search("l(\d)_initialPermanence", path):
-        return partial(enforce_min_max, min_=0.1, max_=0.9)
-    
-    if re.search("l(\d)_connectedPermanence", path):
-        return partial(enforce_min_max, min_=0.1, max_=0.9)
-    
-    if re.search("l(\d)_minThreshold", path):
-        return partial(enforce_min, min_=1)
-    
-    if re.search("l(\d)_maxNewSynapseCount", path):
-        return partial(enforce_min, min_=1)
-    
-    if re.search("l(\d)_permanenceIncrement", path):
-        return partial(enforce_min_max, min_=0.01, max_=0.2)
-    
-    if re.search("l(\d)_permanenceDecrement", path):
-        return partial(enforce_min_max, min_=0.01, max_=0.2)
-    
-    if re.search("l(\d)_predictedSegmentDecrement", path):
-        return partial(enforce_min_max, min_=0.01, max_=0.2)
-    
-    if re.search("l(\d)_maxSegmentsPerCell", path):
-        return partial(enforce_min, min_=5)
-    
-    if re.search("l(\d)_maxSynapsesPerSegment", path):
-        return partial(enforce_min, min_=15)
-    
-    if re.search("encoder_(\d+)_size", path):
-        return partial(enforce_min, min_=1000)
-    
-    if re.search("encoder_(\d+)_resolution", path):
-        return partial(enforce_min, min_=0.01)
-    
-    return nobounds
-
 data_dir = "./data/"
 model_dir = "./model/"
 
-def main(parameters, argv=None, verbose=True):
-    # set up model and predictor
-    # do it before loading data because parameters need to be validated
+def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
+    # TODO set the proper bounds and rules
+    params['htm_num_layers'] = trial.suggest_int('htm_num_layers', 1, 1)
+
+    # encoder for each column to process
+    params['htm_num_encoders'] = trial.suggest_int('htm_num_encoders', len(metadata.get('columns_to_process')), len(metadata.get('columns_to_process')))
+    for c, val in enumerate(row):
+        if isinstance(val, (np.floating, float)):
+            # RDSE encoder
+            params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 1, 1)
+            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 2000, 2000)
+            params[f'htm_encoder_{c}_resolution'] = trial.suggest_float(f'htm_encoder_{c}_resolution', 0.0001, 100, log=True)
+        elif isinstance(val, (np.datetime64, pd.Timestamp, datetime.datetime)):
+            # datetime encoder
+            params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 2, 2)
+        elif isinstance(val, (int, np.integer)):
+            # integer, treated as categories
+            params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 3, 3)
+            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 2000, 2000)
+        elif isinstance(val, (str, np.str)):
+            # string, treated as categories but needs to be transformed to integers first.
+            params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 4, 4)
+            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 2000, 2000)
+        else:
+            raise NotImplementedError(f"unsupported data type in data: {type(val)} in column {c}")
+
+    for i in range(params['htm_num_layers']):
+        params[f'htm_l{i}_potentialRadius'] = trial.suggest_int(f'htm_l{i}_potentialRadius', 16, 16)
+        params[f'htm_l{i}_boostStrength'] = trial.suggest_int(f'htm_l{i}_boostStrength', 1, 1)
+        params[f'htm_l{i}_columnDimensions'] = trial.suggest_int(f'htm_l{i}_columnDimensions', 4096, 4096)
+        params[f"htm_l{i}_dutyCyclePeriod"] = trial.suggest_int(f"htm_l{i}_dutyCyclePeriod", 1000, 1000)
+        params[f"htm_l{i}_localAreaDensity"] = trial.suggest_float(f"htm_l{i}_localAreaDensity", 0.02, 0.02, step=0.01)
+        params[f"htm_l{i}_minPctOverlapDutyCycle"] = trial.suggest_float(f"htm_l{i}_minPctOverlapDutyCycle", 0.001, 0.001, step=0.001)
+        params[f"htm_l{i}_potentialPct"] = trial.suggest_float(f"htm_l{i}_potentialPct", 0.5, 0.5, step=0.1)
+        params[f"htm_l{i}_stimulusThreshold"] = trial.suggest_int(f"htm_l{i}_stimulusThreshold", 0, 0)
+        params[f"htm_l{i}_synPermActiveInc"] = trial.suggest_float(f"htm_l{i}_synPermActiveInc", 0.1, 0.1, step=0.01)
+        params[f"htm_l{i}_synPermConnected"] = trial.suggest_float(f"htm_l{i}_synPermConnected", 0.1, 0.1, step=0.01)
+        params[f"htm_l{i}_synPermInactiveDec"] = trial.suggest_float(f"htm_l{i}_synPermInactiveDec", 0.01, 0.01, step=0.01)
+        params[f"htm_l{i}_cellsPerColumn"] = trial.suggest_int(f"htm_l{i}_cellsPerColumn", 32, 32)
+        params[f"htm_l{i}_activationThreshold"] = trial.suggest_int(f"htm_l{i}_activationThreshold", 13, 13)
+        params[f"htm_l{i}_initialPermanence"] = trial.suggest_float(f"htm_l{i}_initialPermanence", 0.21, 0.21, step=0.01)
+        params[f"htm_l{i}_connectedPermanence"] = trial.suggest_float(f"htm_l{i}_connectedPermanence", 0.5, 0.5, step=0.1)
+        params[f"htm_l{i}_minThreshold"] = trial.suggest_int(f"htm_l{i}_minThreshold", 10, 10)
+        params[f"htm_l{i}_maxNewSynapseCount"] = trial.suggest_int(f"htm_l{i}_maxNewSynapseCount", 20, 20)
+        params[f"htm_l{i}_permanenceIncrement"] = trial.suggest_float(f"htm_l{i}_permanenceIncrement", 0.1, 0.1, step=0.01)
+        params[f"htm_l{i}_permanenceDecrement"] = trial.suggest_float(f"htm_l{i}_permanenceDecrement", 0.1, 0.1, step=0.01)
+        params[f"htm_l{i}_predictedSegmentDecrement"] = trial.suggest_float(f"htm_l{i}_predictedSegmentDecrement", 0.0, 0.0, step=0.01)
+        params[f"htm_l{i}_maxSegmentsPerCell"] = trial.suggest_int(f"htm_l{i}_maxSegmentsPerCell", 255, 255)
+        params[f"htm_l{i}_maxSynapsesPerSegment"] = trial.suggest_int(f"htm_l{i}_maxSynapsesPerSegment", 255, 255)
+
+def suggest(params, metadata, trial, row):
+    if params['model_type'] == 1:
+        return htm_suggestions(params, metadata, trial, row)
+    else:
+        raise Exception("somehow got incorrect model type")
+
+def main(trial: optuna.trial.Trial):
+    params = dict()
+    params['model_type'] = trial.suggest_int('model_type', 1, 1)
+
     data_paths = [d for d in glob.glob(data_dir + "*") if d[-5:] != ".json"]
     data, metadata = parse(pathlib.Path(data_paths[0]))
 
-    admodel = ADModel.create_model(parameters, metadata)
+    suggest(params, metadata, trial, data[0].values())
+    admodel = ADModel.create_model(params, metadata)
 
-    test_cut = max(int(0.90 * len(data)),len(data)-500)
+    test_cut = max(int(0.9 * len(data)),len(data)-500)
     # this is highly imbalanced because the prediction step (which is not necessary for AD)
     # is highly costly so this is reduced as much as possible.
     train = data[:test_cut]
@@ -184,179 +106,64 @@ def main(parameters, argv=None, verbose=True):
         #pred.learn(i, admodel.tms[-1].getActiveCells(), (train[i] / parameters['pred_resolution']).astype('uint'))
 
     # Testing Loop
-    mse = np.zeros_like(metadata['columns_to_process'], dtype=np.float32)
+    se = np.zeros_like(metadata['columns_to_process'], dtype=np.float32)
     for i in tqdm(range(len(test) - 1)):
         admodel.detect(test[i], learn=True)
         prediction = admodel.predict()
         #prediction = np.argmax(pred.infer(admodel.tms[-1].getActiveCells())[1])*parameters['pred_resolution']
-        mse += admodel.decoder.se(prediction, test[i+1])
+        se += admodel.decoder.se(prediction, test[i+1])
+        
+        # support early pruning by Optuna
+        trial.report(se, i)
+        if trial.should_prune():
+            raise optuna.TrialPruned()
 
-    mse = mse/(max(len(test)-1, 1))
-
-    mse = np.sum(mse)
-    return -mse # module will look to maximize the output value, so negate it to find the smallest mse
+    # mse = mse/(max(len(test)-1, 1))
+    # mse = np.sum(mse)
+    return se # return squared error
 
 if __name__ == "__main__":
-
-    # mse = main(default_parameters)
-    # exit()
-
     parser = argparse.ArgumentParser()
-    parser.add_argument('-v', '--verbose', action='store_true',
-        help='Passed onto the experiment\'s main function.')
+    parser.add_argument('-n', '--processes',  type=int, default=-1,
+        help='Number of experiments to run simultaneously, defaults to the number of CPU cores available.')
     parser.add_argument('--tag', type=str,
         help='Optional string appended to the name of the AE directory.  Use tags to '
                 'keep multiple variants of an experiment alive and working at the same time.')
-    parser.add_argument('-n', '--processes',  type=int, default=os.cpu_count(),
-        help='Number of experiments to run simultaneously, defaults to the number of CPU cores available.')
-    parser.add_argument('--time_limit',  type=float, default=None,
-        help='Hours, time limit for each run of the experiment.',)
-    parser.add_argument('--global_time', type=float, default=15,
-        help='Minutes, time limit for the whole script (i.e. all experiments combined)')
-    parser.add_argument('--memory_limit',  type=float, default=None,
-        help='Gigabytes, RAM memory limit for each run of the experiment.')
-    parser.add_argument('--parse',  action='store_true',
-        help='Parse the lab report and write it back to the same file, then exit.')
-    parser.add_argument('--rmz', action='store_true',
-        help='Remove all experiments which have zero attempts.')
-    parser.add_argument('experiment', nargs=argparse.REMAINDER,
-        help='Name of experiment module followed by its command line arguments.')
     parser.add_argument('-s', '--skip', action='store_true',
         help='In case the model selection can be skipped.')
-
-
-    all_optimizers = [
-        optimizers.EvaluateDefaultParameters,
-        optimizers.EvaluateAllExperiments,
-        optimizers.EvaluateBestExperiment,
-        optimizers.EvaluateHashes,
-        optimizers.GridSearch,
-        optimizers.CombineBest,
-        CustomParticleSwarmOptimization,
-    ]
-    assert( all( issubclass(Z, optimizers.BaseOptimizer) for Z in all_optimizers))
-    for method in all_optimizers:
-        method.add_arguments(parser)
+    parser.add_argument('--global_time', type=float, default=2*60, # 2 hours is default
+        help='Minutes, time limit for the whole script (i.e. all experiments combined). After timeout current trials will finish before exiting.')
+    parser.add_argument('-db', action='store_true',
+        help='Indicates the database used by the optimizer should be kept after completion. This database can be reused.')
 
     args = parser.parse_args()
-
     if args.skip:
-        logger.info("skip flag")
-        exit()
+        logger.info("exiting because of skip flag.")
+        exit(0)
 
-    # default if there is no remainder, since there is no default accepted with argparse.REMAINDER
-    if args.experiment == []:
-        args.experiment = [__file__]
-
-    selected_method = [X for X in all_optimizers if X.use_this_optimizer(args)]
-
-    # need to retrieve metadata to recreate model
-    # need data to set up encoder default parameters
     data_path = pathlib.Path([d for d in glob.glob(data_dir + "*") if d[-5:] != ".json"][0])
-    data, metadata = parse(data_path)
+    _, metadata = parse(data_path)
 
     if args.tag is None:
         args.tag = data_path.stem
-        logger.info(f"automatically tagged the experiment with {args.tag}")
+        logger.info(f"automatically named study: {args.tag}")
 
-    # load in default parameters base
-    with open("adlib/model_selection/base_params.json", "r") as f:
-        default_parameters = json.load(f)
+    storage_name = f"sqlite:///{args.tag}.db"
+    study = optuna.create_study(study_name=args.tag, direction='minimize', storage=storage_name, load_if_exists=True)
 
-        for k, v in default_parameters.items():
-            # change lists to tuples because this is required by ae
-            if type(v) == list:
-                default_parameters[k] = tuple(v)
-
-    col_to_process = metadata.get('columns_to_process')
-    # encoder for each column to process
-    default_parameters['num_encoders'] = len(col_to_process)
-
-    encoder_types = ''
-
-    for c, val in enumerate(data[0].values()):
-        if isinstance(val, (np.floating, float)):
-            # RDSE encoder
-            default_parameters[f'encoder_{c}_type'] = 1
-            default_parameters[f'encoder_{c}_size'] = 2000
-            default_parameters[f'encoder_{c}_resolution'] = 0.05
-        elif isinstance(val, (np.datetime64, pd.Timestamp, datetime.datetime)):
-            # datetime encoder
-            default_parameters[f'encoder_{c}_type'] = 2
-        elif isinstance(val, (int, np.integer)):
-            # integer, treated as categories
-            default_parameters[f'encoder_{c}_type'] = 3
-            default_parameters[f'encoder_{c}_size'] = 2000
-        elif isinstance(val, (str, np.str)):
-            # string, treated as categories but needs to be transformed to integers first.
-            default_parameters[f'encoder_{c}_type'] = 4
-            default_parameters[f'encoder_{c}_size'] = 2000
-        else:
-            raise NotImplementedError(f"unsupported data type in data: {type(val)} in column {c}")
-
-        # always add the encoder type to this string since its value should never be changed
-        encoder_types += f",['encoder_{c}_type']"
-
-    with open("adlib/model_selection/default_params.json", "w") as f:
-        json.dump(default_parameters, f, indent=4)
-
-    ae = optim.Laboratory(experiment_argv=args.experiment,
-                          tag      = args.tag,
-                          verbose  = args.verbose)
-    
-    ae.save()
-    logger.info("Lab Report written to %s"%ae.lab_report)
-
-    if args.parse:
-        pass
-
-    elif args.rmz:
-        for x in ae.experiments:
-            if x.attempts == 0:
-                ae.experiments.remove(x)
-                ae.experiment_ids.pop(hash(x))
-        ae.save()
-        logger.info("Removed all experiments which had not yet been attempted.")
-
-    elif not selected_method:
-        logger.error("Error: missing argument for what to to.")
-    elif len(selected_method) > 1:
-        logger.error("Error: too many argument for what to to.")
+    logger.info(f"timeout after {args.global_time} minutes")
+    if args.db:
+        logger.info(f"keeping database after completion at {args.tag}.db")
     else:
-        if selected_method[0] == CustomParticleSwarmOptimization:
-            freezing_rules = [
-                ParamFreezingRule("['model_type'],['num_encoders']"+encoder_types),
-                ParamFreezingRule(freeze_unused_layers),
-            ]
-            ae.method = selected_method[0](ae, freezing_rules, enforce_param_bounds, args)
-        else:
-            ae.method = selected_method[0]( ae, args )
+        logger.info("removing study database after completion")
+    study.optimize(main, timeout=60*args.global_time, n_jobs=args.processes)
+    # logger.info(f"best parameters: {study.best_params}")
 
-        giga = 2**30
-        if args.memory_limit is not None:
-            memory_limit = int(args.memory_limit * giga)
-        else:
-            from psutil import virtual_memory
-            available_memory = virtual_memory().available
-            memory_limit = int(available_memory / args.processes)
-            logger.info("Memory Limit %.2g GB per instance."%(memory_limit / giga))
+    mdl_loc = model_dir + "best_model.h5"
+    best_mdl = ADModel.create_model(study.best_params, metadata)
+    best_mdl.save(mdl_loc)
+    logger.info(f"model saved at {mdl_loc}")
 
-        t = threading.Thread(target = ae.run, args=(args.processes, args.time_limit, memory_limit), daemon=True)
-        t.start()
-        logger.info(f"running experiments in process for {args.global_time} minutes")
-        time.sleep(60*args.global_time)
-        ae.finish()
-        t.join()
-
-        # ae.run(args.processes, args.time_limit, memory_limit)
-
-        best = max(ae.experiments, key = lambda x: x.mean() )
-        mdl_loc = model_dir + "best_model.h5"
-        best_mdl = ADModel.create_model(best.parameters, metadata)
-        best_mdl.save(mdl_loc)
-        logger.info(f"model saved at {mdl_loc}")
-
-        # ae.run( processes    = args.processes,
-        #         time_limit   = args.time_limit,
-        #         memory_limit = memory_limit,)
-    exit(0)
+    if not args.db:
+        if os.path.isfile(f"{args.tag}.db"):
+            os.remove(f"{args.tag}.db")
