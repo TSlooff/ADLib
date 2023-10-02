@@ -29,16 +29,16 @@ data_dir = "./data/"
 model_dir = "./model/"
 
 def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
-    # TODO set the proper bounds and rules
-    params['htm_num_layers'] = trial.suggest_int('htm_num_layers', 1, 1)
+    params['htm_num_layers'] = trial.suggest_int('htm_num_layers', 1, 3)
 
     # encoder for each column to process
     params['htm_num_encoders'] = trial.suggest_int('htm_num_encoders', len(metadata.get('columns_to_process')), len(metadata.get('columns_to_process')))
+    input_size = 0
     for c, val in enumerate(row):
         if isinstance(val, (np.floating, float)):
             # RDSE encoder
             params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 1, 1)
-            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 2000, 2000)
+            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
             params[f'htm_encoder_{c}_resolution'] = trial.suggest_float(f'htm_encoder_{c}_resolution', 0.0001, 100, log=True)
         elif isinstance(val, (np.datetime64, pd.Timestamp, datetime.datetime)):
             # datetime encoder
@@ -46,37 +46,38 @@ def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row
         elif isinstance(val, (int, np.integer)):
             # integer, treated as categories
             params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 3, 3)
-            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 2000, 2000)
+            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
         elif isinstance(val, (str, np.str)):
             # string, treated as categories but needs to be transformed to integers first.
             params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 4, 4)
-            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 2000, 2000)
+            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
         else:
             raise NotImplementedError(f"unsupported data type in data: {type(val)} in column {c}")
+        input_size += params[f'htm_encoder_{c}_size']
 
     for i in range(params['htm_num_layers']):
-        params[f'htm_l{i}_potentialRadius'] = trial.suggest_int(f'htm_l{i}_potentialRadius', 16, 16)
-        params[f'htm_l{i}_boostStrength'] = trial.suggest_int(f'htm_l{i}_boostStrength', 1, 1)
-        params[f'htm_l{i}_columnDimensions'] = trial.suggest_int(f'htm_l{i}_columnDimensions', 4096, 4096)
-        params[f"htm_l{i}_dutyCyclePeriod"] = trial.suggest_int(f"htm_l{i}_dutyCyclePeriod", 1000, 1000)
+        params[f'htm_l{i}_potentialRadius'] = trial.suggest_int(f'htm_l{i}_potentialRadius', 10, int(0.6*input_size))
+        params[f'htm_l{i}_boostStrength'] = trial.suggest_float(f'htm_l{i}_boostStrength', 0.0, 3.0, step=0.5)
+        params[f'htm_l{i}_columnDimensions'] = trial.suggest_int(f'htm_l{i}_columnDimensions', 100, 10000, step=100)
+        params[f"htm_l{i}_dutyCyclePeriod"] = trial.suggest_int(f"htm_l{i}_dutyCyclePeriod", 1000, 100000, step=1000)
         params[f"htm_l{i}_localAreaDensity"] = trial.suggest_float(f"htm_l{i}_localAreaDensity", 0.02, 0.02, step=0.01)
-        params[f"htm_l{i}_minPctOverlapDutyCycle"] = trial.suggest_float(f"htm_l{i}_minPctOverlapDutyCycle", 0.001, 0.001, step=0.001)
-        params[f"htm_l{i}_potentialPct"] = trial.suggest_float(f"htm_l{i}_potentialPct", 0.5, 0.5, step=0.1)
-        params[f"htm_l{i}_stimulusThreshold"] = trial.suggest_int(f"htm_l{i}_stimulusThreshold", 0, 0)
-        params[f"htm_l{i}_synPermActiveInc"] = trial.suggest_float(f"htm_l{i}_synPermActiveInc", 0.1, 0.1, step=0.01)
-        params[f"htm_l{i}_synPermConnected"] = trial.suggest_float(f"htm_l{i}_synPermConnected", 0.1, 0.1, step=0.01)
-        params[f"htm_l{i}_synPermInactiveDec"] = trial.suggest_float(f"htm_l{i}_synPermInactiveDec", 0.01, 0.01, step=0.01)
-        params[f"htm_l{i}_cellsPerColumn"] = trial.suggest_int(f"htm_l{i}_cellsPerColumn", 32, 32)
-        params[f"htm_l{i}_activationThreshold"] = trial.suggest_int(f"htm_l{i}_activationThreshold", 13, 13)
-        params[f"htm_l{i}_initialPermanence"] = trial.suggest_float(f"htm_l{i}_initialPermanence", 0.21, 0.21, step=0.01)
-        params[f"htm_l{i}_connectedPermanence"] = trial.suggest_float(f"htm_l{i}_connectedPermanence", 0.5, 0.5, step=0.1)
-        params[f"htm_l{i}_minThreshold"] = trial.suggest_int(f"htm_l{i}_minThreshold", 10, 10)
-        params[f"htm_l{i}_maxNewSynapseCount"] = trial.suggest_int(f"htm_l{i}_maxNewSynapseCount", 20, 20)
-        params[f"htm_l{i}_permanenceIncrement"] = trial.suggest_float(f"htm_l{i}_permanenceIncrement", 0.1, 0.1, step=0.01)
-        params[f"htm_l{i}_permanenceDecrement"] = trial.suggest_float(f"htm_l{i}_permanenceDecrement", 0.1, 0.1, step=0.01)
-        params[f"htm_l{i}_predictedSegmentDecrement"] = trial.suggest_float(f"htm_l{i}_predictedSegmentDecrement", 0.0, 0.0, step=0.01)
-        params[f"htm_l{i}_maxSegmentsPerCell"] = trial.suggest_int(f"htm_l{i}_maxSegmentsPerCell", 255, 255)
-        params[f"htm_l{i}_maxSynapsesPerSegment"] = trial.suggest_int(f"htm_l{i}_maxSynapsesPerSegment", 255, 255)
+        params[f"htm_l{i}_minPctOverlapDutyCycle"] = trial.suggest_float(f"htm_l{i}_minPctOverlapDutyCycle", 0.01, 0.05, step=0.001)
+        params[f"htm_l{i}_potentialPct"] = trial.suggest_float(f"htm_l{i}_potentialPct", 0.2, 0.8, step=0.1)
+        params[f"htm_l{i}_stimulusThreshold"] = trial.suggest_int(f"htm_l{i}_stimulusThreshold", 1, 100)
+        params[f"htm_l{i}_synPermActiveInc"] = trial.suggest_float(f"htm_l{i}_synPermActiveInc", 0.05, 0.2, step=0.01)
+        params[f"htm_l{i}_synPermConnected"] = trial.suggest_float(f"htm_l{i}_synPermConnected", 0.4, 0.95, step=0.05)
+        params[f"htm_l{i}_synPermInactiveDec"] = trial.suggest_float(f"htm_l{i}_synPermInactiveDec", 0.01, 0.2, step=0.01)
+        params[f"htm_l{i}_cellsPerColumn"] = trial.suggest_int(f"htm_l{i}_cellsPerColumn", 10, 250, step=10)
+        params[f"htm_l{i}_minThreshold"] = trial.suggest_int(f"htm_l{i}_minThreshold", 1, 30)
+        params[f"htm_l{i}_activationThreshold"] = trial.suggest_int(f"htm_l{i}_activationThreshold", params[f"htm_l{i}_minThreshold"], 50)
+        params[f"htm_l{i}_connectedPermanence"] = trial.suggest_float(f"htm_l{i}_connectedPermanence", 0.4, 0.95, step=0.05)
+        params[f"htm_l{i}_initialPermanence"] = trial.suggest_float(f"htm_l{i}_initialPermanence", 0.20, round(params[f"htm_l{i}_connectedPermanence"], 2), step=0.05)
+        params[f"htm_l{i}_maxSegmentsPerCell"] = trial.suggest_int(f"htm_l{i}_maxSegmentsPerCell", 25, 265, step=20)
+        params[f"htm_l{i}_maxSynapsesPerSegment"] = trial.suggest_int(f"htm_l{i}_maxSynapsesPerSegment", 25, 265, step=20)
+        params[f"htm_l{i}_maxNewSynapseCount"] = trial.suggest_int(f"htm_l{i}_maxNewSynapseCount", 1, params[f"htm_l{i}_maxSynapsesPerSegment"])
+        params[f"htm_l{i}_permanenceIncrement"] = trial.suggest_float(f"htm_l{i}_permanenceIncrement", 0.05, 0.21, step=0.02)
+        params[f"htm_l{i}_permanenceDecrement"] = trial.suggest_float(f"htm_l{i}_permanenceDecrement", 0.01, 0.21, step=0.02)
+        params[f"htm_l{i}_predictedSegmentDecrement"] = trial.suggest_float(f"htm_l{i}_predictedSegmentDecrement", params[f"htm_l{i}_permanenceIncrement"] * params[f"htm_l{i}_localAreaDensity"], params[f"htm_l{i}_permanenceIncrement"] * params[f"htm_l{i}_localAreaDensity"], step=0.01)
 
 def suggest(params, metadata, trial, row):
     if params['model_type'] == 1:
@@ -156,7 +157,7 @@ if __name__ == "__main__":
         logger.info(f"keeping database after completion at {args.tag}.db")
     else:
         logger.info("removing study database after completion")
-    study.optimize(main, timeout=60*args.global_time, n_jobs=args.processes)
+    study.optimize(main, timeout=60*args.global_time, n_jobs=args.processes, gc_after_trial=True)
     # logger.info(f"best parameters: {study.best_params}")
 
     mdl_loc = model_dir + "best_model.h5"
