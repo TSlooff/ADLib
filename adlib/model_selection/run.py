@@ -37,19 +37,23 @@ def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row
     for c, val in enumerate(row):
         if isinstance(val, (np.floating, float)):
             # RDSE encoder
-            params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 1, 1)
+            params[f'htm_encoder_{c}_type'] = 1
+            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
             params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
             params[f'htm_encoder_{c}_resolution'] = trial.suggest_float(f'htm_encoder_{c}_resolution', 0.0001, 100, log=True)
         elif isinstance(val, (np.datetime64, pd.Timestamp, datetime.datetime)):
             # datetime encoder
-            params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 2, 2)
+            params[f'htm_encoder_{c}_type'] = 2
+            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
         elif isinstance(val, (int, np.integer)):
             # integer, treated as categories
-            params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 3, 3)
+            params[f'htm_encoder_{c}_type'] = 3
+            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
             params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
         elif isinstance(val, (str, np.str)):
             # string, treated as categories but needs to be transformed to integers first.
-            params[f'htm_encoder_{c}_type'] = trial.suggest_int(f'htm_encoder_{c}_type', 4, 4)
+            params[f'htm_encoder_{c}_type'] = 4
+            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
             params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
         else:
             raise NotImplementedError(f"unsupported data type in data: {type(val)} in column {c}")
@@ -60,7 +64,8 @@ def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row
         params[f'htm_l{i}_boostStrength'] = trial.suggest_float(f'htm_l{i}_boostStrength', 0.0, 3.0, step=0.5)
         params[f'htm_l{i}_columnDimensions'] = trial.suggest_int(f'htm_l{i}_columnDimensions', 100, 10000, step=100)
         params[f"htm_l{i}_dutyCyclePeriod"] = trial.suggest_int(f"htm_l{i}_dutyCyclePeriod", 1000, 100000, step=1000)
-        params[f"htm_l{i}_localAreaDensity"] = trial.suggest_float(f"htm_l{i}_localAreaDensity", 0.02, 0.02, step=0.01)
+        params[f"htm_l{i}_localAreaDensity"] = 0.02
+        trial.set_user_attr(f"htm_l{i}_localAreaDensity", params[f"htm_l{i}_localAreaDensity"])
         params[f"htm_l{i}_minPctOverlapDutyCycle"] = trial.suggest_float(f"htm_l{i}_minPctOverlapDutyCycle", 0.01, 0.05, step=0.001)
         params[f"htm_l{i}_potentialPct"] = trial.suggest_float(f"htm_l{i}_potentialPct", 0.2, 0.8, step=0.1)
         params[f"htm_l{i}_stimulusThreshold"] = trial.suggest_int(f"htm_l{i}_stimulusThreshold", 1, 100)
@@ -77,13 +82,30 @@ def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row
         params[f"htm_l{i}_maxNewSynapseCount"] = trial.suggest_int(f"htm_l{i}_maxNewSynapseCount", 1, params[f"htm_l{i}_maxSynapsesPerSegment"])
         params[f"htm_l{i}_permanenceIncrement"] = trial.suggest_float(f"htm_l{i}_permanenceIncrement", 0.05, 0.21, step=0.02)
         params[f"htm_l{i}_permanenceDecrement"] = trial.suggest_float(f"htm_l{i}_permanenceDecrement", 0.01, 0.21, step=0.02)
-        params[f"htm_l{i}_predictedSegmentDecrement"] = trial.suggest_float(f"htm_l{i}_predictedSegmentDecrement", params[f"htm_l{i}_permanenceIncrement"] * params[f"htm_l{i}_localAreaDensity"], params[f"htm_l{i}_permanenceIncrement"] * params[f"htm_l{i}_localAreaDensity"], step=0.01)
+        params[f"htm_l{i}_predictedSegmentDecrement"] = params[f"htm_l{i}_permanenceIncrement"] * params[f"htm_l{i}_localAreaDensity"]
+        trial.set_user_attr(f"htm_l{i}_predictedSegmentDecrement", params[f"htm_l{i}_predictedSegmentDecrement"])
+
+def ae_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
+    params['ae_num_layers'] = trial.suggest_int('ae_num_layers', 1, 10)
+
+    float_columns = []
+    for c, val in enumerate(row):
+        if isinstance(val, (np.floating, float)):
+            # should be processed
+            float_columns.append(c)
+        else:
+            # not processed yet.
+            pass
+    params['ae_float_columns'] = float_columns
+    trial.set_user_attr('ae_float_columns', float_columns)
 
 def suggest(params, metadata, trial, row):
     if params['model_type'] == 1:
         return htm_suggestions(params, metadata, trial, row)
+    if params['model_type'] == 2:
+        return ae_suggestions(params, metadata, trial, row)
     else:
-        raise Exception("somehow got incorrect model type")
+        raise Exception("Received an incorrect model type")
 
 def main(trial: optuna.trial.Trial):
     params = dict()
@@ -115,13 +137,13 @@ def main(trial: optuna.trial.Trial):
         se += admodel.decoder.se(prediction, test[i+1])
         
         # support early pruning by Optuna
-        trial.report(se, i)
+        trial.report(np.sum(se / (i+1)), i)
         if trial.should_prune():
             raise optuna.TrialPruned()
 
-    # mse = mse/(max(len(test)-1, 1))
-    # mse = np.sum(mse)
-    return se # return squared error
+    mse = se/(max(len(test)-1, 1))
+    mse = np.sum(mse)
+    return mse # return mean squared error
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -143,7 +165,7 @@ if __name__ == "__main__":
         exit(0)
 
     data_path = pathlib.Path([d for d in glob.glob(data_dir + "*") if d[-5:] != ".json"][0])
-    _, metadata = parse(data_path)
+    _, metadata = parse(data_path, metadata=None, verbosity=1)
 
     if args.tag is None:
         args.tag = data_path.stem
@@ -161,7 +183,9 @@ if __name__ == "__main__":
     # logger.info(f"best parameters: {study.best_params}")
 
     mdl_loc = model_dir + "best_model.h5"
-    best_mdl = ADModel.create_model(study.best_params, metadata)
+    params = study.best_params
+    params.update(study.best_trial.user_attrs) # fixed attributes which are necessary for model creation are stored here. 
+    best_mdl = ADModel.create_model(params, metadata)
     best_mdl.save(mdl_loc)
     logger.info(f"model saved at {mdl_loc}")
 

@@ -11,13 +11,14 @@ from pandas import DataFrame
 
 logger = logging.getLogger('data_handler')
 
-def get_metadata(file_path: pathlib.Path):
+def get_metadata(file_path: pathlib.Path, verbosity):
     """
     returns the metadata dict given the file path
     """
     meta_loc = file_path.with_suffix('.json')
     if not meta_loc.exists():
-        logger.warning(f"no metadata: {meta_loc} does not exist")
+        if verbosity > 0:
+            logger.warning(f"no metadata: {meta_loc} does not exist")
         return dict()
     with open(meta_loc, "r") as f:
         metadata = json.load(f)
@@ -169,14 +170,15 @@ suffix_map = {
     ".odt": parse_excel,
 }
 
-def parse(file_path: pathlib.Path, metadata = None):
+def parse(file_path: pathlib.Path, metadata = None, verbosity = 0):
     if not file_path.exists():
         logger.error(f"{file_path} does not exist")
         sys.exit(1)
     if not metadata:
         # nothing passed
-        metadata = get_metadata(file_path)
-    logger.info(f"parsing file: {file_path}")
+        metadata = get_metadata(file_path, verbosity)
+    if verbosity > 0:
+        logger.info(f"parsing file: {file_path}")
     # get the function to parse the given suffix, default to unknown if suffix is not in map
     parsing_fn = suffix_map.get(file_path.suffix, parse_unknown)
     return parsing_fn(file_path, metadata)
