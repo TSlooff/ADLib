@@ -14,16 +14,12 @@ import logging.config
 from adlib.data_handlers import parse
 import glob
 import json
-from collections import deque
 from adlib.model_selection.model import ADModel
-import os
 
 from tqdm import tqdm
 
 logging.config.fileConfig('adlib/logging/logging.conf')
 logger = logging.getLogger('main')
-
-logger.info("starting anomaly detection")
 
 # parse command line arguments
 parser = argparse.ArgumentParser(description='Anomaly Detection algorithm applied to all data in data folder.')
@@ -43,26 +39,23 @@ model_dir = "./model/"
 # NOTE: assumes one model file in model folder
 model_loc = glob.glob(model_dir + "*")[0]
 model = ADModel.load(model_loc)
+anomaly_per_file = dict()
 
-anomaly_indexes = {}
+logger.info(f"starting anomaly detection using cutoff of {cutoff}")
 
 for data_loc in [d for d in glob.glob(data_dir + "*") if d[-5:] != ".json"]: # exclude json files
     data, metadata = parse(pathlib.Path(data_loc), model.metadata)
+    anomaly_indexes = list()
     for i in tqdm(range(len(data))):
         anomaly_score = model.detect(data[i], learn=True)
         if anomaly_score >= cutoff:
-            anoms = anomaly_indexes.get(data_loc)
-            if not anoms:
-                anoms = deque()
-            anoms.append(i)
-    anoms = anomaly_indexes.get(data_loc)
-    if anoms:
-        anomaly_indexes[data_loc] = list(anoms)
-    logger.info(f"detected {len(anomaly_indexes.get(data_loc, []))} anomalies in {data_loc}")
+            anomaly_indexes.append(i)
+    anomaly_per_file[data_loc] = anomaly_indexes
+    logger.info(f"detected {len(anomaly_indexes)} anomalies in {data_loc}")
     model.reset()
 
 # output anomaly indexes to json
 with open(data_dir + "anomalies.json", "w") as f:
-    f.write(json.dumps(anomaly_indexes))
+    f.write(json.dumps(anomaly_per_file))
 
 model.save(model_loc)

@@ -14,16 +14,113 @@ from htm.algorithms import SpatialPooler as SP
 from htm.encoders.rdse import RDSE, RDSE_Parameters
 from htm.encoders.date import DateEncoder
 from htm.bindings.algorithms import ANMode
-from htm.algorithms import Predictor
 
-from scipy.stats import mode
 from adlib.model_selection.CustomEncoders import MultiEncoder
+import optuna
+import torch
+from welford import Welford
+from scipy.stats import norm
 
 class ModelType(Enum):
     # for now only HTM implemented.
     HTM = 1
-    CNN = 2
-    GNN = 3
+    AE = 2
+    CAE = 3
+
+
+def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
+    params['htm_num_layers'] = trial.suggest_int('htm_num_layers', 1, 3)
+
+    # encoder for each column to process
+    params['htm_num_encoders'] = trial.suggest_int('htm_num_encoders', len(metadata.get('columns_to_process')), len(metadata.get('columns_to_process')))
+    input_size = 0
+    for c, val in enumerate(row):
+        if isinstance(val, (np.floating, float)):
+            # RDSE encoder
+            params[f'htm_encoder_{c}_type'] = 1
+            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
+            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
+            params[f'htm_encoder_{c}_resolution'] = trial.suggest_float(f'htm_encoder_{c}_resolution', 0.0001, 100, log=True)
+        elif isinstance(val, (np.datetime64, pd.Timestamp, datetime.datetime)):
+            # datetime encoder
+            params[f'htm_encoder_{c}_type'] = 2
+            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
+        elif isinstance(val, (int, np.integer)):
+            # integer, treated as categories
+            params[f'htm_encoder_{c}_type'] = 3
+            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
+            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
+        elif isinstance(val, (str, np.str)):
+            # string, treated as categories but needs to be transformed to integers first.
+            params[f'htm_encoder_{c}_type'] = 4
+            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
+            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
+        else:
+            raise NotImplementedError(f"unsupported data type in data: {type(val)} in column {c}")
+        input_size += params[f'htm_encoder_{c}_size']
+
+    for i in range(params['htm_num_layers']):
+        params[f'htm_l{i}_potentialRadius'] = trial.suggest_int(f'htm_l{i}_potentialRadius', 10, int(0.6*input_size))
+        params[f'htm_l{i}_boostStrength'] = trial.suggest_float(f'htm_l{i}_boostStrength', 0.0, 3.0, step=0.5)
+        params[f'htm_l{i}_columnDimensions'] = trial.suggest_int(f'htm_l{i}_columnDimensions', 100, 10000, step=100)
+        params[f"htm_l{i}_dutyCyclePeriod"] = trial.suggest_int(f"htm_l{i}_dutyCyclePeriod", 1000, 100000, step=1000)
+        params[f"htm_l{i}_localAreaDensity"] = 0.02
+        trial.set_user_attr(f"htm_l{i}_localAreaDensity", params[f"htm_l{i}_localAreaDensity"])
+        params[f"htm_l{i}_minPctOverlapDutyCycle"] = trial.suggest_float(f"htm_l{i}_minPctOverlapDutyCycle", 0.01, 0.05, step=0.001)
+        params[f"htm_l{i}_potentialPct"] = trial.suggest_float(f"htm_l{i}_potentialPct", 0.2, 0.8, step=0.1)
+        params[f"htm_l{i}_stimulusThreshold"] = trial.suggest_int(f"htm_l{i}_stimulusThreshold", 1, 100)
+        params[f"htm_l{i}_synPermActiveInc"] = trial.suggest_float(f"htm_l{i}_synPermActiveInc", 0.05, 0.2, step=0.01)
+        params[f"htm_l{i}_synPermConnected"] = trial.suggest_float(f"htm_l{i}_synPermConnected", 0.4, 0.95, step=0.05)
+        params[f"htm_l{i}_synPermInactiveDec"] = trial.suggest_float(f"htm_l{i}_synPermInactiveDec", 0.01, 0.2, step=0.01)
+        params[f"htm_l{i}_cellsPerColumn"] = trial.suggest_int(f"htm_l{i}_cellsPerColumn", 10, 250, step=10)
+        params[f"htm_l{i}_minThreshold"] = trial.suggest_int(f"htm_l{i}_minThreshold", 1, 30)
+        params[f"htm_l{i}_activationThreshold"] = trial.suggest_int(f"htm_l{i}_activationThreshold", params[f"htm_l{i}_minThreshold"], 50)
+        params[f"htm_l{i}_connectedPermanence"] = trial.suggest_float(f"htm_l{i}_connectedPermanence", 0.4, 0.95, step=0.05)
+        params[f"htm_l{i}_initialPermanence"] = trial.suggest_float(f"htm_l{i}_initialPermanence", 0.20, round(params[f"htm_l{i}_connectedPermanence"], 2), step=0.05)
+        params[f"htm_l{i}_maxSegmentsPerCell"] = trial.suggest_int(f"htm_l{i}_maxSegmentsPerCell", 25, 265, step=20)
+        params[f"htm_l{i}_maxSynapsesPerSegment"] = trial.suggest_int(f"htm_l{i}_maxSynapsesPerSegment", 25, 265, step=20)
+        params[f"htm_l{i}_maxNewSynapseCount"] = trial.suggest_int(f"htm_l{i}_maxNewSynapseCount", 1, params[f"htm_l{i}_maxSynapsesPerSegment"])
+        params[f"htm_l{i}_permanenceIncrement"] = trial.suggest_float(f"htm_l{i}_permanenceIncrement", 0.05, 0.21, step=0.02)
+        params[f"htm_l{i}_permanenceDecrement"] = trial.suggest_float(f"htm_l{i}_permanenceDecrement", 0.01, 0.21, step=0.02)
+        params[f"htm_l{i}_predictedSegmentDecrement"] = params[f"htm_l{i}_permanenceIncrement"] * params[f"htm_l{i}_localAreaDensity"]
+        trial.set_user_attr(f"htm_l{i}_predictedSegmentDecrement", params[f"htm_l{i}_predictedSegmentDecrement"])
+
+def ae_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
+    params['ae_num_layers'] = trial.suggest_int('ae_num_layers', 1, 10)
+    params['ae_lr'] = trial.suggest_float('ae_lr', 1e-5, 1e-2, log=True)
+    
+    float_columns = []
+    for c, val in enumerate(row):
+        if isinstance(val, (np.floating, float)):
+            # should be processed
+            float_columns.append(c)
+        else:
+            # not processed yet.
+            pass
+    params['ae_float_columns'] = float_columns
+    trial.set_user_attr('ae_float_columns', float_columns)
+
+    # input layer
+    params['ae_l0_nodes'] = len(float_columns)
+    trial.set_user_attr('ae_l0_nodes', params['ae_l0_nodes'])
+    params['ae_latent_nodes'] = trial.suggest_int('ae_latent_nodes', 1, int(0.5 * params['ae_l0_nodes']))
+    # for simplicity just use one activation throughout
+    params['ae_activation'] = trial.suggest_categorical('ae_activation', choices=['relu', 'sigmoid'])
+
+    for l in range(1, params['ae_num_layers']):
+        params[f'ae_l{l}_nodes'] = trial.suggest_int(f'ae_l{l}_nodes', params['ae_latent_nodes'], params[f'ae_l{l-1}_nodes'])
+
+    params[f'ae_l{params["ae_num_layers"]}_nodes'] = params['ae_latent_nodes']
+    trial.set_user_attr(f'ae_l{params["ae_num_layers"]}_nodes', params[f'ae_l{params["ae_num_layers"]}_nodes'])
+
+def suggest(params, metadata, trial, row):
+    params['model_type'] = trial.suggest_int('model_type', 1, 2)
+    if params['model_type'] == 1:
+        return htm_suggestions(params, metadata, trial, row)
+    if params['model_type'] == 2:
+        return ae_suggestions(params, metadata, trial, row)
+    else:
+        raise Exception("Received an incorrect model type")
 
 class ADModel:
 
@@ -34,6 +131,10 @@ class ADModel:
     def create_model(parameters: dict, metadata: dict):
         if parameters['model_type'] == ModelType.HTM.value:
             return ADModelHTM(parameters, metadata)
+        elif parameters['model_type'] == ModelType.AE.value:
+            if type(parameters['ae_activation']) == bytes:
+                parameters['ae_activation'] = parameters['ae_activation'].decode()
+            return ADModelAE(parameters, metadata)
         else:
             raise ValueError(f"model type not supported: {parameters['model_type']}")
 
@@ -47,12 +148,88 @@ class ADModel:
             mdl = ADModel.create_model(dict((k,v[()]) for (k,v) in f['parameters'].items()), dict((k,v[()]) for (k,v) in f['metadata'].items()))
             mdl.load(f)
             return mdl
+    
+    def SE(self, next_val):
+        raise NotImplementedError()
+
+    def reset(self):
+        pass
+
+class ADModelAE(ADModel):
+
+    def __init__(self, parameters: dict, metadata: dict):
+        super().__init__()
+        self.parameters = parameters
+        self.metadata = metadata
+
+        self.activation_mapping = {
+            'relu': torch.nn.ReLU(),
+            'sigmoid': torch.nn.Sigmoid()
+        }
+
+        self.float_cols = parameters['ae_float_columns']
+
+        layers = []
+
+        # encoder part
+        for l in range(1, parameters['ae_num_layers'] + 1):
+            layers.append(torch.nn.Linear(parameters[f'ae_l{l-1}_nodes'], parameters[f'ae_l{l}_nodes']))
+            layers.append(self.activation_mapping[parameters['ae_activation']])
+
+        # decoder part
+        for l in range(parameters['ae_num_layers'], 1, -1):
+            layers.append(torch.nn.Linear(parameters[f'ae_l{l}_nodes'], parameters[f'ae_l{l-1}_nodes']))
+            layers.append(self.activation_mapping[parameters['ae_activation']])
+
+        # for output layer the activation function is ommitted to ensure that the model can go to any input value range.
+        layers.append(torch.nn.Linear(parameters['ae_l1_nodes'], parameters['ae_l0_nodes']))
+        self.ae = torch.nn.Sequential(*layers)
+
+        self.loss_fn = torch.nn.MSELoss()
+        self.optimizer = torch.optim.Adam(self.ae.parameters(),
+                                    lr = parameters['ae_lr'])
+        
+        # used for the anomaly score
+        self.welford = Welford()
+        
+    def detect(self, data, learn=True):
+        """
+        given the data(point), will calculate the anomaly score of that data.
+        """
+        data = torch.Tensor(list(data.values()))
+        reconstructed = self.ae.forward(data)
+        loss = self.loss_fn(reconstructed, data)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self.welford.add(np.array(loss.item()))
+        self.se = torch.square(reconstructed - data).detach().numpy()
+        return norm.cdf(loss.item(), loc=self.welford.mean, scale=np.sqrt(self.welford.var_p))
+
+    def SE(self, next_val):
+        return self.se
+
+    def save(self, file_path: str):
+        with h5py.File(file_path, 'w') as f:
+            param_grp = f.create_group('parameters')
+            param_grp.update(self.parameters)
+            metadata_grp = f.create_group('metadata')
+            metadata_grp.update(self.metadata)
+            f['ae_state_dict'] = np.frombuffer(pickle.dumps(self.ae.state_dict()), dtype=np.uint8)
+            f['opt_state_dict'] = np.frombuffer(pickle.dumps(self.optimizer.state_dict()), dtype=np.uint8)
+            f['welford'] = np.frombuffer(pickle.dumps(self.welford), dtype=np.uint8)
+            
+
+    def load(self, f: h5py.File):
+        self.ae.load_state_dict(pickle.loads(f['ae_state_dict'][()].tobytes()))
+        self.optimizer.load_state_dict(pickle.loads(f['opt_state_dict'][()].tobytes()))
+        self.welford = pickle.loads(f['welford'][()].tobytes())
+
 
 class ADModelHTM(ADModel):
 
     def __init__(self, parameters: dict, metadata: dict):
         super().__init__()
-
         
         self.datetime_cols = []
         arithmatic_cols = []
@@ -208,6 +385,9 @@ class ADModelHTM(ADModel):
         """
         for i in range(len(self.tms)):
             self.tms[i].reset()
+
+    def SE(self, next_val):
+        return self.decoder.se(self.predict(), next_val)
 
 class SDRDecoder:
     def __init__(self, arithmatic_cols:list, datetime_cols: list, category_cols: list) -> None:

@@ -18,7 +18,7 @@ import datetime
 from tqdm import tqdm
 
 from adlib.data_handlers import parse
-from adlib.model_selection.model import ADModel
+from adlib.model_selection.model import ADModel, suggest
 
 import optuna
 
@@ -28,88 +28,8 @@ logger = logging.getLogger('main')
 data_dir = "./data/"
 model_dir = "./model/"
 
-def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
-    params['htm_num_layers'] = trial.suggest_int('htm_num_layers', 1, 3)
-
-    # encoder for each column to process
-    params['htm_num_encoders'] = trial.suggest_int('htm_num_encoders', len(metadata.get('columns_to_process')), len(metadata.get('columns_to_process')))
-    input_size = 0
-    for c, val in enumerate(row):
-        if isinstance(val, (np.floating, float)):
-            # RDSE encoder
-            params[f'htm_encoder_{c}_type'] = 1
-            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
-            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
-            params[f'htm_encoder_{c}_resolution'] = trial.suggest_float(f'htm_encoder_{c}_resolution', 0.0001, 100, log=True)
-        elif isinstance(val, (np.datetime64, pd.Timestamp, datetime.datetime)):
-            # datetime encoder
-            params[f'htm_encoder_{c}_type'] = 2
-            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
-        elif isinstance(val, (int, np.integer)):
-            # integer, treated as categories
-            params[f'htm_encoder_{c}_type'] = 3
-            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
-            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
-        elif isinstance(val, (str, np.str)):
-            # string, treated as categories but needs to be transformed to integers first.
-            params[f'htm_encoder_{c}_type'] = 4
-            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
-            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
-        else:
-            raise NotImplementedError(f"unsupported data type in data: {type(val)} in column {c}")
-        input_size += params[f'htm_encoder_{c}_size']
-
-    for i in range(params['htm_num_layers']):
-        params[f'htm_l{i}_potentialRadius'] = trial.suggest_int(f'htm_l{i}_potentialRadius', 10, int(0.6*input_size))
-        params[f'htm_l{i}_boostStrength'] = trial.suggest_float(f'htm_l{i}_boostStrength', 0.0, 3.0, step=0.5)
-        params[f'htm_l{i}_columnDimensions'] = trial.suggest_int(f'htm_l{i}_columnDimensions', 100, 10000, step=100)
-        params[f"htm_l{i}_dutyCyclePeriod"] = trial.suggest_int(f"htm_l{i}_dutyCyclePeriod", 1000, 100000, step=1000)
-        params[f"htm_l{i}_localAreaDensity"] = 0.02
-        trial.set_user_attr(f"htm_l{i}_localAreaDensity", params[f"htm_l{i}_localAreaDensity"])
-        params[f"htm_l{i}_minPctOverlapDutyCycle"] = trial.suggest_float(f"htm_l{i}_minPctOverlapDutyCycle", 0.01, 0.05, step=0.001)
-        params[f"htm_l{i}_potentialPct"] = trial.suggest_float(f"htm_l{i}_potentialPct", 0.2, 0.8, step=0.1)
-        params[f"htm_l{i}_stimulusThreshold"] = trial.suggest_int(f"htm_l{i}_stimulusThreshold", 1, 100)
-        params[f"htm_l{i}_synPermActiveInc"] = trial.suggest_float(f"htm_l{i}_synPermActiveInc", 0.05, 0.2, step=0.01)
-        params[f"htm_l{i}_synPermConnected"] = trial.suggest_float(f"htm_l{i}_synPermConnected", 0.4, 0.95, step=0.05)
-        params[f"htm_l{i}_synPermInactiveDec"] = trial.suggest_float(f"htm_l{i}_synPermInactiveDec", 0.01, 0.2, step=0.01)
-        params[f"htm_l{i}_cellsPerColumn"] = trial.suggest_int(f"htm_l{i}_cellsPerColumn", 10, 250, step=10)
-        params[f"htm_l{i}_minThreshold"] = trial.suggest_int(f"htm_l{i}_minThreshold", 1, 30)
-        params[f"htm_l{i}_activationThreshold"] = trial.suggest_int(f"htm_l{i}_activationThreshold", params[f"htm_l{i}_minThreshold"], 50)
-        params[f"htm_l{i}_connectedPermanence"] = trial.suggest_float(f"htm_l{i}_connectedPermanence", 0.4, 0.95, step=0.05)
-        params[f"htm_l{i}_initialPermanence"] = trial.suggest_float(f"htm_l{i}_initialPermanence", 0.20, round(params[f"htm_l{i}_connectedPermanence"], 2), step=0.05)
-        params[f"htm_l{i}_maxSegmentsPerCell"] = trial.suggest_int(f"htm_l{i}_maxSegmentsPerCell", 25, 265, step=20)
-        params[f"htm_l{i}_maxSynapsesPerSegment"] = trial.suggest_int(f"htm_l{i}_maxSynapsesPerSegment", 25, 265, step=20)
-        params[f"htm_l{i}_maxNewSynapseCount"] = trial.suggest_int(f"htm_l{i}_maxNewSynapseCount", 1, params[f"htm_l{i}_maxSynapsesPerSegment"])
-        params[f"htm_l{i}_permanenceIncrement"] = trial.suggest_float(f"htm_l{i}_permanenceIncrement", 0.05, 0.21, step=0.02)
-        params[f"htm_l{i}_permanenceDecrement"] = trial.suggest_float(f"htm_l{i}_permanenceDecrement", 0.01, 0.21, step=0.02)
-        params[f"htm_l{i}_predictedSegmentDecrement"] = params[f"htm_l{i}_permanenceIncrement"] * params[f"htm_l{i}_localAreaDensity"]
-        trial.set_user_attr(f"htm_l{i}_predictedSegmentDecrement", params[f"htm_l{i}_predictedSegmentDecrement"])
-
-def ae_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
-    params['ae_num_layers'] = trial.suggest_int('ae_num_layers', 1, 10)
-
-    float_columns = []
-    for c, val in enumerate(row):
-        if isinstance(val, (np.floating, float)):
-            # should be processed
-            float_columns.append(c)
-        else:
-            # not processed yet.
-            pass
-    params['ae_float_columns'] = float_columns
-    trial.set_user_attr('ae_float_columns', float_columns)
-
-def suggest(params, metadata, trial, row):
-    if params['model_type'] == 1:
-        return htm_suggestions(params, metadata, trial, row)
-    if params['model_type'] == 2:
-        return ae_suggestions(params, metadata, trial, row)
-    else:
-        raise Exception("Received an incorrect model type")
-
 def main(trial: optuna.trial.Trial):
     params = dict()
-    params['model_type'] = trial.suggest_int('model_type', 1, 1)
 
     data_paths = [d for d in glob.glob(data_dir + "*") if d[-5:] != ".json"]
     data, metadata = parse(pathlib.Path(data_paths[0]))
@@ -132,9 +52,7 @@ def main(trial: optuna.trial.Trial):
     se = np.zeros_like(metadata['columns_to_process'], dtype=np.float32)
     for i in tqdm(range(len(test) - 1)):
         admodel.detect(test[i], learn=True)
-        prediction = admodel.predict()
-        #prediction = np.argmax(pred.infer(admodel.tms[-1].getActiveCells())[1])*parameters['pred_resolution']
-        se += admodel.decoder.se(prediction, test[i+1])
+        se += admodel.SE(test[i+1])
         
         # support early pruning by Optuna
         trial.report(np.sum(se / (i+1)), i)
