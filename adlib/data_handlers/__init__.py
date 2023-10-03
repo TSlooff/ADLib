@@ -90,7 +90,7 @@ def parse_csv(file_path, metadata) -> np.array:
     mdtype = metadata.get("dtype")
     dtype = {}
     datetime_cols = []
-    if mdtype:
+    if mdtype is not None:
         for i in range(len(mdtype)):
             if np.dtype(mdtype[i]) == np.datetime64:
                 datetime_cols.append(i)
@@ -170,11 +170,24 @@ suffix_map = {
     ".odt": parse_excel,
 }
 
+def unbyte(metadata: dict):
+    # model saving will encode strings to bytes, this is necessary to decode them back to strings.
+    for k, v in metadata.items():
+        if isinstance(v, bytes):
+            metadata[k] = v.decode()
+        elif isinstance(v, (list, np.ndarray)):
+            for i, j in enumerate(v):
+                if isinstance(j, bytes):
+                    v[i] = j.decode()
+            metadata[k] = v
+
 def parse(file_path: pathlib.Path, metadata = None, verbosity = 0):
     if not file_path.exists():
         logger.error(f"{file_path} does not exist")
         sys.exit(1)
-    if not metadata:
+    if metadata:
+        unbyte(metadata)
+    else:
         # nothing passed
         metadata = get_metadata(file_path, verbosity)
     if verbosity > 0:

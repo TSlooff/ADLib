@@ -6,6 +6,10 @@ import numpy as np
 import h5py
 import pickle
 from collections import defaultdict, Counter
+import pandas as pd
+import datetime
+from math import ceil
+from collections import deque
 
 # imports here because they're only necessary if the ADModel is HTM
 from htm.bindings.sdr import SDR
@@ -45,12 +49,13 @@ def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row
             # datetime encoder
             params[f'htm_encoder_{c}_type'] = 2
             trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
+            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
         elif isinstance(val, (int, np.integer)):
             # integer, treated as categories
             params[f'htm_encoder_{c}_type'] = 3
             trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
             params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
-        elif isinstance(val, (str, np.str)):
+        elif isinstance(val, (str, np.str_)):
             # string, treated as categories but needs to be transformed to integers first.
             params[f'htm_encoder_{c}_type'] = 4
             trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
@@ -88,22 +93,31 @@ def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row
 def ae_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
     params['ae_num_layers'] = trial.suggest_int('ae_num_layers', 1, 10)
     params['ae_lr'] = trial.suggest_float('ae_lr', 1e-5, 1e-2, log=True)
+    params['ae_window'] = trial.suggest_int('ae_window', 1, 24)
     
-    float_columns = []
+    process_cols = []
+    str_cols = []
     for c, val in enumerate(row):
         if isinstance(val, (np.floating, float)):
             # should be processed
-            float_columns.append(c)
-        else:
+            process_cols.append(c)
+        elif isinstance(val, (int, np.integer)):
+            process_cols.append(c)
+        elif isinstance(val, (str, np.str_)):
+            # string, treated as integers but needs to be transformed to integers first.
+            process_cols.append(c)
+            str_cols.append(c)
+        else: # TODO handle when this is list or numpy array.
             # not processed yet.
             pass
-    params['ae_float_columns'] = float_columns
-    trial.set_user_attr('ae_float_columns', float_columns)
-
+    params['ae_process_columns'] = process_cols
+    trial.set_user_attr('ae_process_columns', params['ae_process_columns'])
+    params['ae_str_columns'] = str_cols
+    trial.set_user_attr('ae_str_columns', params['ae_str_columns'])
     # input layer
-    params['ae_l0_nodes'] = len(float_columns)
+    params['ae_l0_nodes'] = len(process_cols) * params['ae_window']
     trial.set_user_attr('ae_l0_nodes', params['ae_l0_nodes'])
-    params['ae_latent_nodes'] = trial.suggest_int('ae_latent_nodes', 1, int(0.5 * params['ae_l0_nodes']))
+    params['ae_latent_nodes'] = trial.suggest_int('ae_latent_nodes', 1, ceil(0.5 * params['ae_l0_nodes']))
     # for simplicity just use one activation throughout
     params['ae_activation'] = trial.suggest_categorical('ae_activation', choices=['relu', 'sigmoid'])
 
@@ -125,7 +139,7 @@ def suggest(params, metadata, trial, row):
 class ADModel:
 
     def __init__(self):
-        pass
+        self.processed_columns = None
 
     @staticmethod
     def create_model(parameters: dict, metadata: dict):
@@ -159,15 +173,21 @@ class ADModelAE(ADModel):
 
     def __init__(self, parameters: dict, metadata: dict):
         super().__init__()
+        if isinstance(parameters['ae_window'], np.int_):
+            parameters['ae_window'] = parameters['ae_window'].item()
         self.parameters = parameters
         self.metadata = metadata
+
+        self.window = deque([np.zeros_like(parameters['ae_process_columns']) for _ in range(parameters['ae_window'])], maxlen=parameters['ae_window'])
 
         self.activation_mapping = {
             'relu': torch.nn.ReLU(),
             'sigmoid': torch.nn.Sigmoid()
         }
 
-        self.float_cols = parameters['ae_float_columns']
+        self.processed_columns = parameters['ae_process_columns']
+        self.str_cols = set(parameters['ae_str_columns'])
+        self.str_map = StringMap()
 
         layers = []
 
@@ -196,14 +216,15 @@ class ADModelAE(ADModel):
         """
         given the data(point), will calculate the anomaly score of that data.
         """
-        data = torch.Tensor(list(data.values()))
+        self.window.append(np.array([self.str_map.encode(data[c]) if c in self.str_cols else data[c] for c in self.processed_columns]))
+        data = torch.Tensor(np.array(self.window)).flatten()
         reconstructed = self.ae.forward(data)
         loss = self.loss_fn(reconstructed, data)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
         self.welford.add(np.array(loss.item()))
-        self.se = torch.square(reconstructed - data).detach().numpy()
+        self.se = torch.square(reconstructed[-1] - data[-1]).detach().numpy() # take SE only on last row, i.e. current data
         return norm.cdf(loss.item(), loc=self.welford.mean, scale=np.sqrt(self.welford.var_p))
 
     def SE(self, next_val):
@@ -218,13 +239,18 @@ class ADModelAE(ADModel):
             f['ae_state_dict'] = np.frombuffer(pickle.dumps(self.ae.state_dict()), dtype=np.uint8)
             f['opt_state_dict'] = np.frombuffer(pickle.dumps(self.optimizer.state_dict()), dtype=np.uint8)
             f['welford'] = np.frombuffer(pickle.dumps(self.welford), dtype=np.uint8)
-            
+            f['window'] = np.frombuffer(pickle.dumps(self.window), dtype=np.uint8)
+            f['str_map'] = np.frombuffer(pickle.dumps(self.str_map), dtype=np.uint8)
 
     def load(self, f: h5py.File):
         self.ae.load_state_dict(pickle.loads(f['ae_state_dict'][()].tobytes()))
         self.optimizer.load_state_dict(pickle.loads(f['opt_state_dict'][()].tobytes()))
         self.welford = pickle.loads(f['welford'][()].tobytes())
+        self.window = pickle.loads(f['window'][()].tobytes())
+        self.str_map = pickle.loads(f['str_map'][()].tobytes())
 
+    def reset(self):
+        self.window = deque([np.zeros_like(self.parameters['ae_process_columns']) for _ in range(self.parameters['ae_window'])], maxlen=self.parameters['ae_window'])
 
 class ADModelHTM(ADModel):
 
@@ -249,7 +275,8 @@ class ADModelHTM(ADModel):
                 arithmatic_cols.append(e)
             elif parameters[f'htm_encoder_{e}_type'] == 2:
                 # set up datetime encoder
-                encoders[e] = DateEncoder(weekend=100, timeOfDay=1000, dayOfWeek=900)
+                size = parameters[f'htm_encoder_{e}_size']
+                encoders[e] = DateEncoder(weekend=int(0.05 * size), timeOfDay=int(0.5 * size), dayOfWeek=int(0.45 * size))
                 self.datetime_cols.append(e)
             elif parameters[f'htm_encoder_{e}_type'] == 3:
                 # set up category encoder for integers.
@@ -265,7 +292,7 @@ class ADModelHTM(ADModel):
                 rdse_params.size = parameters[f'htm_encoder_{e}_size']
                 rdse_params.category = True
                 rdse_params.sparsity = 0.02
-                encoders[e] = StringEncoder(RDSE(rdse_params))
+                encoders[e] = StringSDREncoder(RDSE(rdse_params))
                 category_cols.append(e)
 
         self.encoder = MultiEncoder(encoders)
@@ -329,6 +356,8 @@ class ADModelHTM(ADModel):
                 externalPredictiveInputs=0,                  # defualt = 0
                 anomalyMode=ANMode.RAW                       # default = ANMode.RAW
             )
+
+            self.processed_columns = metadata['columns_to_process']
         
     def detect(self, data, learn=True):
         """
@@ -531,12 +560,35 @@ class SDRDecoder:
                 error[col] = prediction[col] - actual_data[col]
         return error**2
 
-class StringEncoder:
-    def __init__(self, encoder) -> None:
+class StringMap:
+    def __init__(self) -> None:
         self.idx = 1
         self.string_int = dict()
         self.int_string = dict()
-        self.encoder = encoder
+
+    def encode(self, string):
+        """
+        converts the given string to an ID using an internal mapping.
+        if there is no mapping for this string yet, it is added and returned.
+        """
+        if string not in self.string_int:
+            # no mapping yet. Add mapping
+            self.string_int[string] = self.idx
+            self.int_string[self.idx] = string
+            self.idx += 1
+        return self.string_int[string]
+
+    def decode(self, _id):
+        """
+        converts the given string ID to the string.
+        if the given integer does not correspond to an existing string, None is returned
+        """
+        return self.int_string.get(_id)
+
+class StringSDREncoder:
+    def __init__(self, encoder) -> None:
+        self.map = StringMap()
+        self.encoder = encoder # SDR encoder
         self.size = self.encoder.size
 
     def encode(self, string):
@@ -544,16 +596,11 @@ class StringEncoder:
         converts the given string to an SDR using an internal mapping and RDSE encoder.
         if there is no mapping for this string yet, it is added and encoded.
         """
-        if string not in self.string_int:
-            # no mapping yet. Add mapping
-            self.string_int[string] = self.idx
-            self.int_string[self.idx] = string
-            self.idx += 1
-        return self.encoder.encode(self.string_int[string])
+        return self.encoder.encode(self.map.encode(string))
 
-    def decode(self, int):
+    def decode(self, _id):
         """
         converts the given string ID to the string.
         if the given integer does not correspond to an existing string, None is returned
         """
-        return self.int_string.get(int)
+        return self.map.decode(_id)
