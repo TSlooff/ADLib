@@ -154,5 +154,4 @@ class MultiEncoder():
                 e = None
             e.loadFromString(json.dumps(d).encode())
             input_list.append(e)
-        # TODO
         return MultiEncoder(input_list)
