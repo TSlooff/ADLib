@@ -26,43 +26,45 @@ from welford import Welford
 from scipy.stats import norm
 
 class ModelType(Enum):
-    # for now only HTM implemented.
     HTM = 1
     AE = 2
-    CAE = 3
 
+def htm_handle_datatypes(params, trial, row, parent=""):
+    input_size = 0
+    for c, val in enumerate(row):
+        if isinstance(val, (np.floating, float)):
+            # RDSE encoder
+            params[f'htm_encoder{parent}_{c}_type'] = 1
+            trial.set_user_attr(f'htm_encoder{parent}_{c}_type', params[f'htm_encoder{parent}_{c}_type'])
+            params[f'htm_encoder{parent}_{c}_size'] = trial.suggest_int(f'htm_encoder{parent}_{c}_size', 500, 10000, step=500)
+            params[f'htm_encoder{parent}_{c}_resolution'] = trial.suggest_float(f'htm_encoder{parent}_{c}_resolution', 0.0001, 100, log=True)
+        elif isinstance(val, (np.datetime64, pd.Timestamp, datetime.datetime)):
+            # datetime encoder
+            params[f'htm_encoder{parent}_{c}_type'] = 2
+            trial.set_user_attr(f'htm_encoder{parent}_{c}_type', params[f'htm_encoder{parent}_{c}_type'])
+            params[f'htm_encoder{parent}_{c}_size'] = trial.suggest_int(f'htm_encoder{parent}_{c}_size', 500, 10000, step=500)
+        elif isinstance(val, (int, np.integer)):
+            # integer, treated as categories
+            params[f'htm_encoder{parent}_{c}_type'] = 3
+            trial.set_user_attr(f'htm_encoder{parent}_{c}_type', params[f'htm_encoder{parent}_{c}_type'])
+            params[f'htm_encoder{parent}_{c}_size'] = trial.suggest_int(f'htm_encoder{parent}_{c}_size', 500, 10000, step=500)
+        elif isinstance(val, (str, np.str_)):
+            # string, treated as categories but needs to be transformed to integers first.
+            params[f'htm_encoder{parent}_{c}_type'] = 4
+            trial.set_user_attr(f'htm_encoder{parent}_{c}_type', params[f'htm_encoder{parent}_{c}_type'])
+            params[f'htm_encoder{parent}_{c}_size'] = trial.suggest_int(f'htm_encoder{parent}_{c}_size', 500, 10000, step=500)
+        else:
+            raise NotImplementedError(f"unsupported data type in data: {type(val)} in column {c}")
+        input_size += params[f'htm_encoder{parent}_{c}_size']
+    return input_size
 
 def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
     params['htm_num_layers'] = trial.suggest_int('htm_num_layers', 1, 3)
 
     # encoder for each column to process
     params['htm_num_encoders'] = trial.suggest_int('htm_num_encoders', len(metadata.get('columns_to_process')), len(metadata.get('columns_to_process')))
-    input_size = 0
-    for c, val in enumerate(row):
-        if isinstance(val, (np.floating, float)):
-            # RDSE encoder
-            params[f'htm_encoder_{c}_type'] = 1
-            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
-            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
-            params[f'htm_encoder_{c}_resolution'] = trial.suggest_float(f'htm_encoder_{c}_resolution', 0.0001, 100, log=True)
-        elif isinstance(val, (np.datetime64, pd.Timestamp, datetime.datetime)):
-            # datetime encoder
-            params[f'htm_encoder_{c}_type'] = 2
-            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
-            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
-        elif isinstance(val, (int, np.integer)):
-            # integer, treated as categories
-            params[f'htm_encoder_{c}_type'] = 3
-            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
-            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
-        elif isinstance(val, (str, np.str_)):
-            # string, treated as categories but needs to be transformed to integers first.
-            params[f'htm_encoder_{c}_type'] = 4
-            trial.set_user_attr(f'htm_encoder_{c}_type', params[f'htm_encoder_{c}_type'])
-            params[f'htm_encoder_{c}_size'] = trial.suggest_int(f'htm_encoder_{c}_size', 500, 10000, step=500)
-        else:
-            raise NotImplementedError(f"unsupported data type in data: {type(val)} in column {c}")
-        input_size += params[f'htm_encoder_{c}_size']
+    
+    input_size = htm_handle_datatypes(params=params, trial=trial, row=row)
 
     for i in range(params['htm_num_layers']):
         params[f'htm_l{i}_potentialRadius'] = trial.suggest_int(f'htm_l{i}_potentialRadius', 10, int(0.6*input_size))
@@ -90,11 +92,7 @@ def htm_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row
         params[f"htm_l{i}_predictedSegmentDecrement"] = params[f"htm_l{i}_permanenceIncrement"] * params[f"htm_l{i}_localAreaDensity"]
         trial.set_user_attr(f"htm_l{i}_predictedSegmentDecrement", params[f"htm_l{i}_predictedSegmentDecrement"])
 
-def ae_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
-    params['ae_num_layers'] = trial.suggest_int('ae_num_layers', 1, 10)
-    params['ae_lr'] = trial.suggest_float('ae_lr', 1e-5, 1e-2, log=True)
-    params['ae_window'] = trial.suggest_int('ae_window', 1, 24)
-    
+def ae_handle_datatypes(params, trial, row):
     process_cols = []
     str_cols = []
     for c, val in enumerate(row):
@@ -110,6 +108,15 @@ def ae_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row)
         else: # TODO handle when this is list or numpy array.
             # not processed yet.
             pass
+    return (process_cols, str_cols)
+
+def ae_suggestions(params: dict, metadata: dict, trial: optuna.trial.Trial, row):
+    params['ae_num_layers'] = trial.suggest_int('ae_num_layers', 1, 10)
+    params['ae_lr'] = trial.suggest_float('ae_lr', 1e-5, 1e-2, log=True)
+    params['ae_window'] = trial.suggest_int('ae_window', 1, 24)
+    
+    process_cols, str_cols = ae_handle_datatypes(params=params, trial=trial, row=row)
+
     params['ae_process_columns'] = process_cols
     trial.set_user_attr('ae_process_columns', params['ae_process_columns'])
     params['ae_str_columns'] = str_cols
