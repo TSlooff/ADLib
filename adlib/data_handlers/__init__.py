@@ -8,6 +8,7 @@ import logging
 import sys
 import json
 from pandas import DataFrame
+from collections.abc import Iterable
 
 logger = logging.getLogger('data_handler')
 
@@ -18,31 +19,29 @@ def get_metadata(file_path: pathlib.Path, verbosity):
     meta_loc = file_path.with_suffix('.json')
     if not meta_loc.exists():
         if verbosity > 0:
-            logger.warning(f"no metadata: {meta_loc} does not exist")
+            logger.info(f"no metadata: {meta_loc} does not exist")
         return dict()
     with open(meta_loc, "r") as f:
         metadata = json.load(f)
+    fix_metadata(metadata)
     return metadata
 
 def parse_unknown(file_path, metadata):
     logger.error(f"file extension unknown: {file_path.suffix}")
     sys.exit(1)
 
-def np_to_list_dict(data):
-    data = [dict(enumerate(datapoint)) for datapoint in data]
-    return data
-
 def slice_cols(data, metadata):
-    col_to_process = metadata.get("columns_to_process")
-    if col_to_process is None:
+    slice_cols = metadata.get("slice_columns")
+    if slice_cols is None:
         if type(data) == DataFrame:
-            col_to_process = list(range(len(data.iloc[0])))
+            col_to_process = list(np.ndindex(data.iloc[0].shape))
         else:
             if len(data.shape) == 1:
                 # only 1 dimension, so add 1
                 data = data[:, None]
-            col_to_process = list(range(len(data[0])))
+            col_to_process = list(np.ndindex(data[0].shape))
         metadata['columns_to_process'] = col_to_process
+        fix_metadata(metadata)
         return data, metadata
     if type(data) == DataFrame:
         # usecols is used now to slice the dataframes, so nothing to do.
@@ -51,7 +50,20 @@ def slice_cols(data, metadata):
         if len(data.shape) == 1:
             # only 1 dimension, so add 1
             data = data[:, None]
-        data = data[:, col_to_process]
+        t = list(zip(*slice_cols))
+        output_shape = data[0].shape
+        data = data[(slice(len(data)), *t)]
+        if len(data[0].flatten()) == np.prod(output_shape):
+            # sliced all columns, can restore shape
+            data = data.reshape(-1, *output_shape)
+            if "columns_to_process" not in metadata:
+                metadata['columns_to_process'] = slice_cols
+        else:
+            # flatten the columns_to_process
+            if "columns_to_process" not in metadata:
+                metadata['columns_to_process'] = list(range(len(metadata['slice_columns'])))
+        # if not the case, leave flat.
+    fix_metadata(metadata)
     return data, metadata
 
 def parse_numpy_fromfile(file_path, metadata) -> np.array:
@@ -68,7 +80,7 @@ def parse_numpy_fromfile(file_path, metadata) -> np.array:
     if data.shape[0] == 1: # this can happen when the shape information is given
         data = data[0]
     data, metadata = slice_cols(data, metadata)
-    return np_to_list_dict(data), metadata
+    return data, metadata
 
 def parse_numpy_load(file_path, metadata) -> np.array:
     """
@@ -76,7 +88,7 @@ def parse_numpy_load(file_path, metadata) -> np.array:
     necessary metadata for data loading is automatically included with numpy so np.load is enough
     """
     data, metadata = slice_cols(np.load(file_path), metadata)
-    return np_to_list_dict(data), metadata
+    return data, metadata
 
 def parse_csv(file_path, metadata) -> np.array:
     """
@@ -101,7 +113,7 @@ def parse_csv(file_path, metadata) -> np.array:
     data = read_csv(file_path, 
                     delimiter=metadata.get('csv_delimiter'),
                     header=header,
-                    usecols=metadata.get("columns_to_process"),
+                    usecols=metadata.get("slice_columns"),
                     dtype=dtype,
                     parse_dates=datetime_cols)
     
@@ -109,7 +121,7 @@ def parse_csv(file_path, metadata) -> np.array:
     data.columns = range(len(data.columns))
     
     data, metadata = slice_cols(data, metadata)
-    return data.to_dict("records"), metadata
+    return data.to_numpy(), metadata
 
 def parse_netcdf(file_path, metadata) -> np.array:
     """
@@ -121,7 +133,7 @@ def parse_netcdf(file_path, metadata) -> np.array:
         sys.exit(1)
     data = nc.Dataset(file_path)[metadata["netcdf_variable"]][:].filled()
     data, metadata = slice_cols(data, metadata)
-    return np_to_list_dict(data), metadata
+    return data, metadata
 
 def parse_excel(file_path, metadata) -> np.array:
     """
@@ -146,7 +158,7 @@ def parse_excel(file_path, metadata) -> np.array:
     data = read_excel(file_path, 
                     header=header,
                     dtype=dtype,
-                    usecols=metadata.get("columns_to_process"),
+                    usecols=metadata.get("slice_columns"),
                     parse_dates=datetime_cols)
 
     # ensure the columns are always just integers
@@ -154,7 +166,7 @@ def parse_excel(file_path, metadata) -> np.array:
 
     data, metadata = slice_cols(data, metadata)
 
-    return data.to_dict("records"), metadata
+    return data.to_numpy(), metadata
 
 suffix_map = {
     ".bin": parse_numpy_fromfile,   # numpy array saved with np.tofile
@@ -170,7 +182,7 @@ suffix_map = {
     ".odt": parse_excel,
 }
 
-def unbyte(metadata: dict):
+def fix_metadata(metadata: dict):
     # model saving will encode strings to bytes, this is necessary to decode them back to strings.
     for k, v in metadata.items():
         if isinstance(v, bytes):
@@ -180,18 +192,39 @@ def unbyte(metadata: dict):
                 if isinstance(j, bytes):
                     v[i] = j.decode()
             metadata[k] = v
+    if 'columns_to_process' in metadata:
+        cols = [None] * len(metadata.get('columns_to_process'))
+        for i, c in enumerate(metadata.get('columns_to_process')):
+            if isinstance(c, Iterable):
+                cols[i] = tuple(c)
+            elif isinstance(c, (int, np.integer)):
+                cols[i] = tuple([c])
+            else:
+                cols[i] = c
+        metadata['columns_to_process'] = cols
+    if 'slice_columns' in metadata:
+        cols = [None] * len(metadata.get('slice_columns'))
+        for i, c in enumerate(metadata.get('slice_columns')):
+            if isinstance(c, Iterable):
+                cols[i] = tuple(c)
+            elif isinstance(c, (int, np.integer)):
+                cols[i] = tuple([c])
+            else:
+                cols[i] = c
+        metadata['slice_columns'] = cols
 
 def parse(file_path: pathlib.Path, metadata = None, verbosity = 0):
     if not file_path.exists():
         logger.error(f"{file_path} does not exist")
         sys.exit(1)
     if metadata:
-        unbyte(metadata)
+        fix_metadata(metadata)
     else:
         # nothing passed
         metadata = get_metadata(file_path, verbosity)
-    if verbosity > 0:
-        logger.info(f"parsing file: {file_path}")
     # get the function to parse the given suffix, default to unknown if suffix is not in map
     parsing_fn = suffix_map.get(file_path.suffix, parse_unknown)
-    return parsing_fn(file_path, metadata)
+    data, metadata = parsing_fn(file_path, metadata)
+    if verbosity > 0:
+        logger.info(f"Loaded file: {file_path}. Loaded data has shape: {data.shape}")
+    return data, metadata
