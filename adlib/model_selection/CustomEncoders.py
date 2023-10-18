@@ -100,13 +100,14 @@ class GeoGridEncoder(GridCellEncoder):
         return self.custom_size
         
 class MultiEncoder():
-    def __init__(self, encoders:list):
+    def __init__(self, encoders:list, columns:list):
         """
         :encoders: list of encoders to use. importantly: should be in same order as how a data point will be processed.
         """
         self._n = len(encoders)
         self.size = sum([e.size for e in encoders])
-        if self._n == 1:
+        self.columns = columns
+        if len(self.columns) == 1:
             # only 1 encoder, overwrite encode method
             self.encode = self.encode_single_val
         self.encoders = encoders
@@ -123,7 +124,7 @@ class MultiEncoder():
         :param: input_data n-dimensional input data, where n = number of encoders
         """
         sdr_encoding = SDR(self.size)
-        sdr_encoding.concatenate([self.encoders[i].encode(input_data[i]) for i in range(self._n)])
+        sdr_encoding.concatenate([self.encoders[i].encode(input_data[c]) for (i,c) in enumerate(self.columns)])
         return sdr_encoding
     
     def get_output_size(self):
@@ -154,5 +155,4 @@ class MultiEncoder():
                 e = None
             e.loadFromString(json.dumps(d).encode())
             input_list.append(e)
-        # TODO
         return MultiEncoder(input_list)
