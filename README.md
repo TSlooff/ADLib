@@ -5,8 +5,8 @@ General scripts for anomaly detection. Included in this git repository is both t
 
 ## Model Selection
 To run the model selection you can use the following command:
-`docker-compose run anomaly_detection python adlib/model_selection/run.py --swarming 10 -n 2 --global_time 2`
-In this example the swarming optimization is used with 10 particles, 2 processors will be used, and global time indicates the amount of minutes to look for the best model before saving the best found thus far. For all options use the -h or --help flag. 
+`docker-compose run anomaly_detection python adlib/model_selection/run.py`
+In this example all default options will be used. For all options use the -h or --help flag. 
 - The script will look at the first data file in the /app/data folder in the docker, which has a volume to ./data by default. You can change this in the docker-compose file if you want the volume to point somewhere else. 
 - The script will output the best model it found to the /app/model folder in the docker, which has a volume to ./model. You can change this as well in the docker-compose file.
 
@@ -14,7 +14,7 @@ In this example the swarming optimization is used with 10 particles, 2 processor
 To run the anomaly detection you can use the following command:
 `docker-compose run anomaly_detection python adlib/detection/run.py`
 - The script will use the first model it finds in /app/model, which has the volume set to ./model/, to perform the detection. It is assumed the data looks like the data used for model selection.
-- This model will be used to perform detection on all data files in /app/data, which has the volume set to ./data/, and output a dictionary named `anomalies.json` where the keys are the names of the datafiles, and the values will be the list of indexes where anomalies were found.
+- This model will be used to perform detection on all data files in /app/data, which has the volume set to ./data/, and output a json file to `anomalies.json` in the data folder. In the json file the keys are the names of the datafiles, and the values are the list of indexes where anomalies were found.
 
 # Use AD Lib directly with Python
 To use the scripts directly is very similar to using the docker. The only requirement is to set up python (version 3.9 is used in the docker) with the correct dependencies beforehand.
@@ -33,20 +33,20 @@ In short you can install the dependencies from the requirements.txt file include
 
 ## Model Selection
 
-To run the model selection similarly to the example of the docker, run `python adlib/model_selection/run.py --swarming 10 -n 2 --global_time 2`. 
+To run the model selection similarly to the example of the docker, run `python adlib/model_selection/run.py`. 
 
-In this example the swarming optimization is used with 10 particles, 2 processors will be used, and global time indicates the amount of minutes to look for the best model before saving the best found thus far. For all options use the -h or --help flag. 
-- The script will look at the first data file in the ./data folder in the docker and use this to try and find the best hyperparameters.
+In this example the default options are used. For all options use the -h or --help flag. 
+- The script will look at the first data file in the ./data folder in the docker and use this to try and find the best model and hyperparameters.
 - The script will output the best model it found to the ./model folder. 
 
 ## Anomaly Detection
 To run the anomaly detection you can use the following command:
 `python adlib/detection/run.py`
 - The script will use the first model it finds in ./model to perform the detection. It is assumed the data looks like the data used for model selection. No additional metadata file is needed in this stage, as this is stored in the model and it is assumed that the metadata is identical during both stages.
-- This model will be used to perform detection on all data files in ./data and output a dictionary named `anomalies.json` where the keys are the names of the datafiles, and the values will be the list of indexes where anomalies were found.
+- This model will be used to perform detection on all data files in ./data and output a json named `anomalies.json` where the keys are the names of the datafiles, and the values will be the list of indexes where anomalies were found.
 
 ## Config file
-Depending on the input data and desired functionality, some additional information may be necessary. This metadata is expected in a json file with an identical name to the input data file. This metadata is only needed once during the model selection stage, as the metadata will subsequently be saved in the model and automatically retrieved for the detection. For numpy arrays saved using numpy.save, and generally csv or excel files, no config should be required unless specific functionality is needed.
+Depending on the input data and desired functionality, some additional information may be necessary. This metadata is expected in a json file with an identical name to the input data file. This metadata is only needed once during the model selection stage, as the metadata will subsequently be saved in the model and automatically retrieved for the detection. For numpy arrays saved using numpy.save, and generally csv or excel files, no config should be required unless specific functionality is needed or timestamps are included in the processed data.
 
 Please find below a description of the expected metadata:
 |     General               |                                                                                                                                                                                                                                                                                                                                                                      |                                                     |
