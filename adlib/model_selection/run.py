@@ -56,8 +56,6 @@ def main(trial: optuna.trial.Trial, data, metadata, disable):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-n', '--processes',  type=int, default=-1,
-        help='Number of trials to run simultaneously, defaults to the number of CPU cores available.')
     parser.add_argument('--tag', '-t', type=str,
         help='Name of the experiment, will be used to name database. Defaults to name of input data file.')
     parser.add_argument('-s', '--skip', action='store_true',
@@ -89,7 +87,7 @@ if __name__ == "__main__":
         logger.info(f"keeping database after completion at {args.tag}.db")
     else:
         logger.info("removing study database after completion")
-    study.optimize(partial(main, data=data, metadata=metadata, disable=args.p), timeout=60*args.timeout, n_jobs=args.processes, gc_after_trial=True)
+    study.optimize(partial(main, data=data, metadata=metadata, disable=args.p), timeout=60*args.timeout, gc_after_trial=True)
     # logger.info(f"best parameters: {study.best_params}")
 
     mdl_loc = model_dir + "best_model.h5"
