@@ -60,3 +60,7 @@ Please find below a description of the expected metadata:
 |     header                |     None if   the csv does not include a header, otherwise row index of header                                                                                                                                                                                                                                                                                       |                                                     |
 |     for   netcdf          |                                                                                                                                                                                                                                                                                                                                                                      |                                                     |
 |     netcdf_variable       |    variable   to take for the anomaly detection    |
+
+## Acknowledgements
+
+![Acknowledgements](eu_banner.png)
