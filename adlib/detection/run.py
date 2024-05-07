@@ -32,8 +32,12 @@ parser.add_argument('-c', '--cutoff',
 parser.add_argument('-p', action='store_true',
     help='This flag disables the progress bar when parsing the files.')
 
+parser.add_argument('-l', action='store_false',
+    help='This flag disables the learning of the model during detection.')
+
 args = parser.parse_args()
 cutoff = args.cutoff
+learn = args.l
 
 data_dir = "./data/"
 model_dir = "./model/"
@@ -49,7 +53,7 @@ for data_loc in [d for d in glob.glob(data_dir + "*") if d[-5:] != ".json"]: # e
     data, metadata = parse(pathlib.Path(data_loc), model.metadata, verbosity=1)
     anomaly_indexes = list()
     for i in tqdm(range(len(data)), disable=args.p):
-        anomaly_score = model.detect(data[i], learn=True)
+        anomaly_score = model.detect(data[i], learn=learn)
         if anomaly_score >= cutoff:
             anomaly_indexes.append(i)
     anomaly_per_file[data_loc] = anomaly_indexes
