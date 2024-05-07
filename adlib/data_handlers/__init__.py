@@ -87,7 +87,7 @@ def parse_numpy_load(file_path, metadata) -> np.array:
     parses given file as if saved with np.save
     necessary metadata for data loading is automatically included with numpy so np.load is enough
     """
-    data, metadata = slice_cols(np.load(file_path), metadata)
+    data, metadata = slice_cols(np.load(file_path, allow_pickle=True), metadata)
     return data, metadata
 
 def parse_csv(file_path, metadata) -> np.array:
