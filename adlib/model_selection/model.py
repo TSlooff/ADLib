@@ -26,6 +26,7 @@ from welford import Welford
 from scipy.stats import norm
 from adlib.data_handlers import fix_metadata
 import logging
+import logging.config
 
 logging.config.fileConfig('adlib/logging/logging.conf')
 logger = logging.getLogger('model')
@@ -251,12 +252,12 @@ class ADModelAE(ADModel):
         self.window.append(np.array([self.str_map.encode(data[c]) if c in self.str_cols else data[c] for c in self.processed_columns]))
         data = torch.Tensor(np.array(self.window)).flatten()
         reconstructed = self.ae.forward(data)
+        loss = self.loss_fn(reconstructed, data)
         if learn:
-            loss = self.loss_fn(reconstructed, data)
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
-        self.welford.add(np.array(loss.item()))
+            self.welford.add(np.array(loss.item()))
         self.se = torch.square(reconstructed[-len(self.processed_columns):] - data[-len(self.processed_columns):]).numpy(force=True) # take SE only on last row, i.e. current data
         return norm.cdf(loss.item(), loc=self.welford.mean, scale=np.sqrt(self.welford.var_p))
 
